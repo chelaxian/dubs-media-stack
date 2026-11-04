@@ -234,10 +234,9 @@ services:
     environment:
       <<: *lsio-env
       # RPC/web-UI credentials; the installer generates them into compose/.env
-      # (never printed). If your image version ignores these vars, set
-      # rpc-username/rpc-password once in the container's /config/settings.json.
-      TRANSMISSION_USER: ${TRANSMISSION_USER:-}
-      TRANSMISSION_PASS: ${TRANSMISSION_PASS:-}
+      # (never printed). LinuxServer requires USER/PASS to enable RPC auth.
+      USER: ${TRANSMISSION_USER:?Transmission RPC username is required}
+      PASS: ${TRANSMISSION_PASS:?Transmission RPC password is required}
     volumes:
       - type: bind
         source: ${DUBS_DATA_ROOT:?}/transmission

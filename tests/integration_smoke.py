@@ -468,6 +468,10 @@ if SMOKE:
                         headers={'X-Transmission-Session-Id': session})
             self.assertEqual(r2.status_code, 200)
             self.assertEqual(r2.json()['result'], 'success')
+            unauthenticated = self.requests.post(
+                url, json={'method': 'session-get'}, timeout=10,
+                headers={'X-Transmission-Session-Id': session})
+            self.assertEqual(unauthenticated.status_code, 401)
             bad = self.requests.post(url, json={}, timeout=10,
                                      auth=(self.stack.transmission_user, 'wrong'),
                                      headers={'X-Transmission-Session-Id': session})

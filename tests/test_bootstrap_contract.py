@@ -704,13 +704,19 @@ class SmokeQualityAuthContractTests(unittest.TestCase):
                          {'X-Transmission-Session-Id': 'valid-token'})
         self.assertEqual(case.requests.post.call_args.kwargs['auth'],
                          ('test-user', 'wrong'))
-        # A CSRF challenge is never accepted as proof of bad-auth rejection.
-        session.post.side_effect = [
-            Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
-            Mock(status_code=200, json=lambda: {'result': 'success'})]
-        case.requests.post.return_value = Mock(status_code=409)
-        with self.assertRaises(AssertionError):
-            case.test_04_transmission_daemon_accepts_generated_credentials()
+        unauthenticated = case.requests.post.call_args_list[0].kwargs
+        self.assertNotIn('auth', unauthenticated)
+        self.assertEqual(unauthenticated['headers'],
+                         {'X-Transmission-Session-Id': 'valid-token'})
+        # Neither a CSRF challenge nor an unauthenticated success proves auth.
+        for rejected_status in (409, 200):
+            session.post.side_effect = [
+                Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
+                Mock(status_code=200, json=lambda: {'result': 'success'})]
+            case.requests.post.side_effect = [Mock(status_code=401),
+                                              Mock(status_code=rejected_status)]
+            with self.assertRaises(AssertionError):
+                case.test_04_transmission_daemon_accepts_generated_credentials()
 
 
 if __name__ == '__main__':

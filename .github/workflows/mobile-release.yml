@@ -116,6 +116,22 @@ jobs:
           cd ..
           java -cp /tmp/out-np NotificationPolicyTest
 
+      # Official android-emulator-runner setup; applies only to this ephemeral Ubuntu runner.
+      - name: Enable and verify KVM access
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo '::error::KVM unavailable: runner requires a readable and writable /dev/kvm character device for accelerated Android tests.'
+            id
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+
       - name: Instrumented tests on API ${{ matrix.api-level }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -123,7 +139,8 @@ jobs:
           target: ${{ matrix.target }}
           arch: x86_64
           ram-size: 4096M
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-linux-hw-accel: false
+          emulator-options: -accel on -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: mobile/android
           script: gradle :app:connectedDebugAndroidTest
 

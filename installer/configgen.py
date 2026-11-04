@@ -92,7 +92,8 @@ def generate(config_root, force=False, torrent_host=None, shows_host=None,
     When compose storage roots are known (from compose/.env), config.json
     `paths` are seeded to match that layout so the worker/units agree with it.
     transmission.json is seeded with the SAME RPC credentials the compose
-    daemon uses (TRANSMISSION_USER/PASS), so the fresh daemon actually
+    daemon uses (TRANSMISSION_USER/PASS inputs mapped to LSIO USER/PASS),
+    so the fresh daemon actually
     requires the auth the panel sends.
     Returns (created, skipped) lists of file paths.
     """

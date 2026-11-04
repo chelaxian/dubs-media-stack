@@ -88,6 +88,8 @@ jobs:
           cd compose
           cp .env.example .env
           sed -i "s|^MEDIA_ROOT=$|MEDIA_ROOT=/tmp/dubs-ci-media|; s|^DUBS_DATA_ROOT=$|DUBS_DATA_ROOT=/tmp/dubs-ci-data|" .env
+          # Synthetic values only: config parsing never starts the daemon.
+          printf '%s\n' 'TRANSMISSION_USER=ci-config-user' 'TRANSMISSION_PASS=ci-config-password' >> .env
           mkdir -p /tmp/dubs-ci-media /tmp/dubs-ci-data
           touch /tmp/dubs-ci-media/.dubs-storage-ok
           mkdir -p /tmp/dubs-ci-data/{sonarr,radarr,lidarr,transmission,prowlarr,jellyfin,jellyfin-cache,seerr}
