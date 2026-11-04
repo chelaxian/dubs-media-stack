@@ -172,35 +172,61 @@ public class NotificationsInstrumentedTest {
  @Test public void realWebViewRegistrationMailboxAwaitsAndClears() throws Exception {
   java.util.concurrent.CountDownLatch done=new java.util.concurrent.CountDownLatch(1);
   java.util.concurrent.atomic.AtomicReference<Throwable> error=new java.util.concurrent.atomic.AtomicReference<>();
-  androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
-   android.webkit.WebView web=new android.webkit.WebView(context);
-   web.getSettings().setJavaScriptEnabled(true);
-   web.setWebViewClient(new android.webkit.WebViewClient(){
-    @Override public void onPageFinished(android.webkit.WebView view,String url){
-     view.evaluateJavascript(NotificationSync.registrationMailboxScript("android","fixture"),started->{
-      try{assertEquals("mailbox-started",new org.json.JSONTokener(started).nextValue());}
-      catch(Throwable failure){error.set(failure);done.countDown();view.destroy();return;}
-      readMailbox(view,0,done,error);
-     });
+  android.os.Handler polling=new android.os.Handler(android.os.Looper.getMainLooper());
+  java.util.concurrent.atomic.AtomicBoolean stopped=new java.util.concurrent.atomic.AtomicBoolean();
+  android.webkit.WebView[] ownedWeb=new android.webkit.WebView[1];
+  try{
+   androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+    android.webkit.WebView web=new android.webkit.WebView(context);
+    ownedWeb[0]=web;
+    web.getSettings().setJavaScriptEnabled(true);
+    web.setWebViewClient(new android.webkit.WebViewClient(){
+     @Override public void onPageFinished(android.webkit.WebView view,String url){
+      if(stopped.get())return;
+      view.evaluateJavascript(NotificationSync.registrationMailboxScript("android","fixture"),started->{
+       if(stopped.get())return;
+       try{assertEquals("mailbox-started",new org.json.JSONTokener(started).nextValue());}
+       catch(Throwable failure){error.set(failure);done.countDown();return;}
+       readMailbox(view,0,done,error,polling,stopped);
+      });
+     }
+    });
+    web.loadDataWithBaseURL("https://panel.example.org/","<script>window.fetch=(url)=>Promise.resolve({ok:true,json:()=>new Promise(resolve=>setTimeout(()=>resolve(url==='/api/session'?{csrf:'fixture'}:{token:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',deviceId:'fixture',cursor:9,instanceId:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}),20))});</script>","text/html","UTF-8",null);
+   });
+   assertTrue("bounded async mailbox callback",done.await(15,java.util.concurrent.TimeUnit.SECONDS));
+   if(error.get()!=null)throw new AssertionError(error.get());
+  }finally{
+   androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+    stopped.set(true);
+    polling.removeCallbacksAndMessages(null);
+    if(ownedWeb[0]!=null){
+     ownedWeb[0].stopLoading();
+     ownedWeb[0].setWebViewClient(null);
+     ownedWeb[0].destroy();
+     ownedWeb[0]=null;
     }
    });
-   web.loadDataWithBaseURL("https://panel.example.org/","<script>window.fetch=(url)=>Promise.resolve({ok:true,json:()=>new Promise(resolve=>setTimeout(()=>resolve(url==='/api/session'?{csrf:'fixture'}:{token:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',deviceId:'fixture',cursor:9,instanceId:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}),20))});</script>","text/html","UTF-8",null);
-  });
-  assertTrue("bounded async mailbox callback",done.await(15,java.util.concurrent.TimeUnit.SECONDS));
-  if(error.get()!=null)throw new AssertionError(error.get());
+  }
  }
- private void readMailbox(android.webkit.WebView web,int attempt,java.util.concurrent.CountDownLatch done,java.util.concurrent.atomic.AtomicReference<Throwable> error){
+ private void readMailbox(android.webkit.WebView web,int attempt,java.util.concurrent.CountDownLatch done,java.util.concurrent.atomic.AtomicReference<Throwable> error,android.os.Handler polling,java.util.concurrent.atomic.AtomicBoolean stopped){
+  if(stopped.get())return;
   web.evaluateJavascript(NotificationSync.registrationPollScript("fixture"),result->{
+   if(stopped.get())return;
    try{
     String raw=(String)new org.json.JSONTokener(result).nextValue();
-    if(raw.isEmpty()&&attempt<24){web.postDelayed(()->readMailbox(web,attempt+1,done,error),100);return;}
+    // This WebView is detached: View.postDelayed waits for attachment.
+    if(raw.isEmpty()&&attempt<24){polling.postDelayed(()->readMailbox(web,attempt+1,done,error,polling,stopped),100);return;}
     org.json.JSONObject registration=new org.json.JSONObject(raw);
     assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",registration.getString("instanceId"));
     assertEquals(9,registration.getLong("cursor"));assertEquals(43,registration.getString("token").length());
-    web.evaluateJavascript(NotificationSync.registrationClearScript("fixture"),ignored->web.evaluateJavascript(NotificationSync.registrationPollScript("fixture"),cleared->{
-     try{assertEquals("",new org.json.JSONTokener(cleared).nextValue());}catch(Throwable failure){error.set(failure);}finally{web.destroy();done.countDown();}
-    }));
-   }catch(Throwable failure){error.set(failure);web.destroy();done.countDown();}
+    web.evaluateJavascript(NotificationSync.registrationClearScript("fixture"),ignored->{
+     if(stopped.get())return;
+     web.evaluateJavascript(NotificationSync.registrationPollScript("fixture"),cleared->{
+      if(stopped.get())return;
+      try{assertEquals("",new org.json.JSONTokener(cleared).nextValue());}catch(Throwable failure){error.set(failure);}finally{done.countDown();}
+     });
+    });
+   }catch(Throwable failure){error.set(failure);done.countDown();}
   });
  }
 }
