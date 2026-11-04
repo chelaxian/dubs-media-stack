@@ -1,4 +1,5 @@
 package app.dubs.panel;
+import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -94,10 +95,18 @@ public final class NotificationSync {
   String safe=deviceId.replaceAll("[^A-Za-z0-9_.-]","");
   return "(async()=>{try{const s=await fetch('/api/session',{credentials:'same-origin'});if(!s.ok)return;const sess=await s.json();const body=new URLSearchParams({csrf:sess.csrf,deviceId:'"+safe+"'});fetch('/api/notifications/revoke',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body})}catch(e){}})();'revoke-started'";
  }
- public static void schedule(Context c){
+ public static boolean schedule(Context c){
   JobScheduler js=c.getSystemService(JobScheduler.class);
-  if(js==null)return;
-  js.schedule(new JobInfo.Builder(JOB_ID,new ComponentName(c,NotificationSyncJob.class)).setPeriodic(15*60*1000L).setPersisted(true).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build());
+  if(js==null)return false;
+  try{return js.schedule(new JobInfo.Builder(JOB_ID,new ComponentName(c,NotificationSyncJob.class)).setPeriodic(15*60*1000L).setPersisted(true).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).build())==JobScheduler.RESULT_SUCCESS;
+  }catch(SecurityException denied){
+   Log.w("DubsEvents","Background scheduling denied");
+   return false;
+  }
+ }
+ public static boolean backgroundScheduled(Context c){
+  JobScheduler js=c.getSystemService(JobScheduler.class);
+  return js!=null&&js.getPendingJob(JOB_ID)!=null;
  }
  public static void cancel(Context c){
   JobScheduler js=c.getSystemService(JobScheduler.class);
@@ -109,6 +118,17 @@ public final class NotificationSync {
  public static boolean notificationsAllowed(Context c){
   NotificationManager nm=c.getSystemService(NotificationManager.class);
   if(nm==null||!nm.areNotificationsEnabled())return false;
+  // API 33+ runtime grant and explicit AppOps denial can diverge (API 36).
+  // permissionToOp avoids hidden OP_POST_NOTIFICATION constants; query only our UID.
+  if(Build.VERSION.SDK_INT>=33){
+   AppOpsManager ops=c.getSystemService(AppOpsManager.class);
+   String op=AppOpsManager.permissionToOp("android.permission.POST_NOTIFICATIONS");
+   if(ops!=null&&op!=null){
+    int mode=ops.checkOpNoThrow(op,android.os.Process.myUid(),c.getPackageName());
+    if(mode==AppOpsManager.MODE_IGNORED||mode==AppOpsManager.MODE_ERRORED)return false;
+    // MODE_DEFAULT delegates to the NotificationManager app/channel checks.
+   }
+  }
   if(Build.VERSION.SDK_INT>=26){
    NotificationChannel ch=nm.getNotificationChannel(CHANNEL_ID);
    if(ch!=null&&ch.getImportance()==NotificationManager.IMPORTANCE_NONE)return false;

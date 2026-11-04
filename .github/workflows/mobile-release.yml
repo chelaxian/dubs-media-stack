@@ -16,11 +16,11 @@ on:
       phone_version_code:
         description: Phone versionCode
         required: false
-        default: '13'
+        default: '14'
       phone_version_name:
         description: Phone versionName
         required: false
-        default: 1.3.0
+        default: 1.3.1
       tv_application_id:
         description: TV applicationId (build var, default = repo generic)
         required: false
@@ -28,11 +28,11 @@ on:
       tv_version_code:
         description: TV versionCode
         required: false
-        default: '8'
+        default: '9'
       tv_version_name:
         description: TV versionName
         required: false
-        default: 1.5.0-tv
+        default: 1.5.1-tv
       ios_bundle_id:
         description: iOS bundle identifier (build var, default = repo generic)
         required: false
@@ -74,10 +74,10 @@ jobs:
     env:
       DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
       DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
-      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
-      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
-      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
-      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
+      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
+      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
+      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
+      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -172,11 +172,11 @@ jobs:
         if: ${{ env.DUBS_KEYSTORE_B64 != '' }}
         env:
           DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
           DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
           DUBS_KEYSTORE: /tmp/dubs-signing.p12
         run: |
           printf '%s' "$DUBS_KEYSTORE_B64" | base64 -d > /tmp/dubs-signing.p12
@@ -191,10 +191,10 @@ jobs:
       - name: Build debug APKs (no signing secrets — sanity artifact only)
         if: ${{ env.DUBS_KEYSTORE_B64 == '' }}
         env:
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
         run: |
           cd mobile/android
           gradle :app:lint :tv:lint :app:assembleDebug :tv:assembleDebug

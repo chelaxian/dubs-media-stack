@@ -73,3 +73,22 @@ Jellyfin metadata identity. No additional web access to metadata credentials is
 needed when `jellyfin_api_url` is set. Existing `config.json` files are preserved
 by normal config generation; add this adoption setting before restarting the web
 service. Operator-supplied addresses stay outside the repository.
+
+
+Android 16 release correction (phone 1.3.1/14, TV 1.5.1-tv/9): both
+manifests declare the normal `ACCESS_NETWORK_STATE` permission required for
+network-constrained jobs when targeting API 34+. Scheduling checks
+`RESULT_SUCCESS` and catches `SecurityException`; the device dialog reports
+foreground-only checking when background scheduling failed or no job exists.
+Registration and the durable cursor remain intact for foreground polling.
+
+On API 33+, the runtime gate also queries this app's notification AppOp via
+public `permissionToOp(POST_NOTIFICATIONS)` and three-argument `checkOpNoThrow`.
+Explicit `MODE_IGNORED` / `MODE_ERRORED` deny posting; `MODE_DEFAULT` delegates
+to the existing NotificationManager app/channel checks. API 28 retains those
+checks. No AppOps state is changed by production code. The real OS-denial
+instrumented test still grants runtime permission and sets AppOps to ignore.
+
+Official references: [network job permission](https://developer.android.com/about/versions/14/behavior-changes-14#jobscheduler-reinforces),
+[AppOps public API and modes](https://developer.android.com/reference/android/app/AppOpsManager),
+[JobScheduler results](https://developer.android.com/reference/android/app/job/JobScheduler).

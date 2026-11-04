@@ -39,6 +39,7 @@ public final class MainActivity extends Activity {
   if(notificationFailure!=null)return notificationFailure;
   if(s.needsReconnect())return "Регистрация отозвана. Выключите и снова включите уведомления.";
   if(!s.enabled()||!NotificationSync.notificationsAllowed(this))return NotificationSync.notificationsAllowed(this)?"Уведомления на этом устройстве выключены.":"Разрешение на уведомления не выдано: включите его в системных настройках, затем включите переключатель.";
+  if(!NotificationSync.backgroundScheduled(this))return "Фоновая проверка не запланирована. Проверка выполняется при открытии приложения; выключите и снова включите уведомления для повтора.";
   return "Устройство зарегистрировано. Фоновая проверка: с периодом от 15 минут (JobScheduler, переживает перезагрузку), ОС может откладывать.";
  }
  private void refreshDialog(){if(notificationsDialog==null||!notificationsDialog.isShowing())return;deviceToggle.setOnCheckedChangeListener(null);deviceToggle.setChecked(EventStore.load(this).enabled()&&!EventStore.load(this).needsReconnect()&&NotificationSync.notificationsAllowed(this));deviceToggle.setOnCheckedChangeListener((sw,on)->{if(on)enableNotifications();else disableNotifications(true);refreshDialog();});notifStatus.setText(statusLine(EventStore.load(this)));}
@@ -82,7 +83,7 @@ public final class MainActivity extends Activity {
     synchronized(EventStore.LOCK){
      EventStore state=new EventStore();
      state.setRegistration(token,device,origin,NotificationSync.fingerprint(origin),cursor,instance);
-     state.setEnabled(true);state.save(this);NotificationSync.schedule(this);notificationFailure=null;
+     state.setEnabled(true);state.save(this);boolean scheduled=NotificationSync.schedule(this);notificationFailure=scheduled?null:"Не удалось запланировать фоновую проверку. Проверка выполняется при открытии приложения; выключите и снова включите уведомления для повтора.";
      new Thread(()->NotificationSync.pollOnce(this),"dubs-events-register").start();
     }
    }catch(Exception fail){notificationFailure=failureMessage;}

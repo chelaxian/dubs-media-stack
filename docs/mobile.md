@@ -8,9 +8,9 @@
 В репозитории лежат **исходники собственных обёрток Dubs** (`mobile/`):
 
 - **Android 9+** (`minSdk 28`, `compileSdk`/`targetSdk` 36, Java 17, AGP 8.10.1):
-  WebView-обёртка панели — package **`app.dubs.panel`** (v1.2.0, versionCode 12,
+  WebView-обёртка панели — package **`app.dubs.panel`** (v1.3.1, versionCode 14,
   `mobile/android/app`) и вариант для **Android TV** — package
-  **`app.dubs.panel.tv`** (v1.4.0-tv, versionCode 7, `mobile/android/tv`;
+  **`app.dubs.panel.tv`** (v1.5.1-tv, versionCode 9, `mobile/android/tv`;
   режим навигации с пульта — `mobile/server/tv.css` подключается панелью
   как `dubs-tv`).
 - **iOS 17+** (deployment target 17.0, bundle **`app.dubs.panel`**, v1.3.0):
@@ -139,7 +139,7 @@ Android/iOS/TV, управляется клавиатурой и пультом.
 
 ## Совместимые сборки и проверка
 
-Поставляемые значения: телефон/iOS 1.3.0 (13), TV 1.5.0-tv (8).
+Поставляемые значения: телефон 1.3.1 (14), TV 1.5.1-tv (9), iOS 1.3.0 (13).
 Общие идентификаторы по умолчанию — `app.dubs.panel` и `app.dubs.panel.tv`.
 Для обновления существующей установки оператор должен сохранить её
 applicationId/bundle ID и прежнюю подпись; менять их для обновления нельзя.
@@ -150,7 +150,7 @@ Workflow `.github/workflows/mobile-release.yml` запускается вруч�
 открытии/обновлении PR из того же репозитория; выдаёт только артефакты.
 Все jobs исключены для fork PR: подпись, secrets и артефакты им недоступны.
 Разрешения workflow — только `contents: read`; `pull_request_target` не используется.
-Для PR без inputs явно сохраняются версии телефона 13/1.3.0 и TV 8/1.5.0-tv. Его inputs имеют приоритет над repository variables
+Для PR без inputs явно сохраняются версии телефона 14/1.3.1 и TV 9/1.5.1-tv. Его inputs имеют приоритет над repository variables
 `DUBS_ANDROID_APPLICATION_ID`, `DUBS_TV_APPLICATION_ID`, `DUBS_IOS_BUNDLE_ID`.
 Телефонная Gradle-переменная `DUBS_APPLICATION_ID` получает значение первой
 из этих repository variables. Для подписи используются только secrets

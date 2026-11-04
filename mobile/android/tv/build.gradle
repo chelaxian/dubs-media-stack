@@ -13,8 +13,8 @@ android {
   applicationId = envOr('DUBS_TV_APPLICATION_ID', 'app.dubs.panel.tv')
   minSdk = 28
   targetSdk = 36
-  versionCode = envOr('DUBS_TV_VERSION_CODE', '8').toInteger()
-  versionName = envOr('DUBS_TV_VERSION_NAME', '1.5.0-tv')
+  versionCode = envOr('DUBS_TV_VERSION_CODE', '9').toInteger()
+  versionName = envOr('DUBS_TV_VERSION_NAME', '1.5.1-tv')
  }
  sourceSets { main { java.srcDirs = ['../app/src/main/java']; res.srcDirs = ['../app/src/main/res','src/main/res'] } }
 

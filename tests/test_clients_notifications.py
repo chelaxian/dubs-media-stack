@@ -104,6 +104,7 @@ class AndroidNativeTest(unittest.TestCase):
             self.assertIn("android.permission.BIND_JOB_SERVICE", m)
             self.assertIn('android:name="app.dubs.panel.MainActivity"', m)
             self.assertIn("android.permission.POST_NOTIFICATIONS", m)
+            self.assertIn("android.permission.ACCESS_NETWORK_STATE", m)
             self.assertIn("android.permission.RECEIVE_BOOT_COMPLETED", m)
 
     def test_no_js_bridge_and_immutable_intents(self):
@@ -138,6 +139,22 @@ class AndroidNativeTest(unittest.TestCase):
         self.assertIn("VISIBILITY_PUBLIC", self.sync)
         self.assertIn("BigTextStyle", self.sync)
 
+    def test_android16_denial_and_scheduler_failure_contract(self):
+        self.assertIn('permissionToOp("android.permission.POST_NOTIFICATIONS")', self.sync)
+        self.assertIn('ops.checkOpNoThrow(op,android.os.Process.myUid(),c.getPackageName())', self.sync)
+        self.assertIn('mode==AppOpsManager.MODE_IGNORED||mode==AppOpsManager.MODE_ERRORED', self.sync)
+        self.assertNotIn('mode!=AppOpsManager.MODE_ALLOWED', self.sync)
+        self.assertIn('nm.areNotificationsEnabled()', self.sync)
+        self.assertIn('ch.getImportance()==NotificationManager.IMPORTANCE_NONE', self.sync)
+        self.assertIn('==JobScheduler.RESULT_SUCCESS', self.sync)
+        self.assertIn('catch(SecurityException denied)', self.sync)
+        self.assertIn('if(!NotificationSync.backgroundScheduled(this))', self.main)
+        # The real OS denial fixture must remain an AppOps denial with a runtime grant.
+        device = read("mobile/android/app/src/androidTest/java/app/dubs/panel/NotificationsInstrumentedTest.java")
+        self.assertIn('android.permission.POST_NOTIFICATIONS', device)
+        self.assertIn('POST_NOTIFICATION \"+(allowed?"allow":"ignore")', device)
+        self.assertIn('assertFalse(NotificationSync.notificationsAllowed(context))', device)
+
     def test_local_delivery_only(self):
         ios = read("mobile/ios/Dubs/main.m")
         self.assertNotIn("registerForRemoteNotifications", ios)
@@ -146,10 +163,10 @@ class AndroidNativeTest(unittest.TestCase):
 
     def test_build_overrides_keep_generic_defaults(self):
         self.assertIn("envOr('DUBS_APPLICATION_ID', 'app.dubs.panel')", self.gradle)
-        self.assertIn("envOr('DUBS_PHONE_VERSION_CODE', '13')", self.gradle)
-        self.assertIn("envOr('DUBS_PHONE_VERSION_NAME', '1.3.0')", self.gradle)
-        self.assertIn("envOr('DUBS_TV_VERSION_CODE', '8')", self.tv_gradle)
-        self.assertIn("envOr('DUBS_TV_VERSION_NAME', '1.5.0-tv')", self.tv_gradle)
+        self.assertIn("envOr('DUBS_PHONE_VERSION_CODE', '14')", self.gradle)
+        self.assertIn("envOr('DUBS_PHONE_VERSION_NAME', '1.3.1')", self.gradle)
+        self.assertIn("envOr('DUBS_TV_VERSION_CODE', '9')", self.tv_gradle)
+        self.assertIn("envOr('DUBS_TV_VERSION_NAME', '1.5.1-tv')", self.tv_gradle)
         # applicationId override must not move the source activity class
         self.assertIn("app.dubs.panel.MainActivity", self.manifest)
 
@@ -239,8 +256,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(self.wf.count("persist-credentials: false"), 4)
 
     def test_pr_versions_and_production_id_overrides_have_explicit_fallbacks(self):
-        for field, default in (("phone_version_code", "13"), ("phone_version_name", "1.3.0"),
-                               ("tv_version_code", "8"), ("tv_version_name", "1.5.0-tv")):
+        for field, default in (("phone_version_code", "14"), ("phone_version_name", "1.3.1"),
+                               ("tv_version_code", "9"), ("tv_version_name", "1.5.1-tv")):
             self.assertIn("inputs.%s || '%s'" % (field, default), self.wf)
         for name in ("DUBS_ANDROID_APPLICATION_ID", "DUBS_TV_APPLICATION_ID", "DUBS_IOS_BUNDLE_ID"):
             self.assertIn("vars." + name, self.wf)
