@@ -37,7 +37,7 @@ jobs:
         run: python3 -m compileall -q src automations installer tests mobile
 
       - name: Offline unit suite (no Docker daemon usage, no skips)
-        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+        run: sudo "$(command -v python3)" -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Secret scan (personal hosts/IPs/keys must not leak)
         run: |

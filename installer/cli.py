@@ -261,7 +261,8 @@ def _unit_text(dep, template_text, accounts=None, media_group=None):
 
     accounts is the dict returned by _account_names/_ensure_user; media_group
     is the compose PGID group NAME (empty string when none) — only the worker
-    unit ever references it.
+    (torrent writes) and operations (read-only space-guard statvfs) units
+    reference it.
     """
     accounts = accounts or {
         'web_user': dep.user, 'shared_group': dep.group,
@@ -748,23 +749,31 @@ def _is_private_gateway(gw):
     return not ip.is_unspecified and ip.is_private
 
 
+# The compose file declares top-level `name: dubs` with a network keyed
+# `dubs`, so the network Docker actually creates is `dubs_dubs` — compose
+# only names a network `<project>_<key>`; `dubs_default` never exists.
+MANAGED_NETWORKS = ('dubs_dubs',)
+
+
 def _bridge_gateways():
+    """Exact private bridge gateway IPs of the managed compose network(s)."""
     if not system.have('docker'):
         return []
-    proc = system.run(['docker', 'network', 'inspect', 'dubs_default'], check=False)
-    if proc.returncode != 0:
-        return []
-    try:
-        nets = json.loads(proc.stdout)
-    except ValueError:
-        return []
     out = []
-    for net in nets:
-        for cfg_ in net.get('IPAM', {}).get('Config', []) or []:
-            gw = cfg_.get('Gateway')
-            if gw and _is_private_gateway(gw):
-                out.append(gw)
-    return out
+    for name in MANAGED_NETWORKS:
+        proc = system.run(['docker', 'network', 'inspect', name], check=False)
+        if proc.returncode != 0:
+            continue
+        try:
+            nets = json.loads(proc.stdout)
+        except ValueError:
+            continue
+        for net in nets:
+            for cfg_ in net.get('IPAM', {}).get('Config', []) or []:
+                gw = cfg_.get('Gateway')
+                if gw and _is_private_gateway(gw):
+                    out.append(gw)
+    return list(dict.fromkeys(out))
 
 
 def _owners_configured(dep):

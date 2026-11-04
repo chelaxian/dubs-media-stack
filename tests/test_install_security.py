@@ -184,10 +184,9 @@ class UnitRenderTests(unittest.TestCase):
         self.assertNotIn(str(self.dep.shows_host), rw)
         self.assertIn(str(self.dep.state_root), ro)
 
-    def test_operations_and_oneshots_get_backend_uid_shared_group_only(self):
-        for name in ('dubs-operations@.service', 'dubs-myshows-feed.service',
-                     'dubs-recovery.service', 'dubs-recent-episodes.service',
-                     'dubs-jackett-sync.service'):
+    def test_oneshots_get_backend_uid_shared_group_only(self):
+        for name in ('dubs-myshows-feed.service', 'dubs-recovery.service',
+                     'dubs-recent-episodes.service', 'dubs-jackett-sync.service'):
             text = self.rendered[name]
             self.assertIn('User=dubs-worker\n', text, name)
             self.assertIn('Group=dubs-backend\n', text, name)
@@ -197,9 +196,27 @@ class UnitRenderTests(unittest.TestCase):
                              next((l for l in text.splitlines()
                                    if l.startswith('ReadWritePaths=')), ''), name)
 
-    def test_worker_is_the_only_media_group_member(self):
+    def test_operations_reads_media_for_space_guard_only(self):
+        # Regression: the operations role statvfs's torrent/shows storage for
+        # the space guard (runtime.storage_ready), so it needs READ access via
+        # the compose PGID media group — but every write still goes through
+        # the Sonarr/Transmission APIs, so media paths are read-only here.
+        text = self.rendered['dubs-operations@.service']
+        self.assertIn('User=dubs-worker\n', text)
+        self.assertIn('Group=dubs-backend\n', text)
+        self.assertIn('SupplementaryGroups=dubs mediagrp\n', text)
+        ro = next(l for l in text.splitlines() if l.startswith('ReadOnlyPaths='))
+        self.assertIn('-%s' % self.dep.torrent_host, ro)
+        self.assertIn('-%s' % self.dep.shows_host, ro)
+        rw = next(l for l in text.splitlines() if l.startswith('ReadWritePaths='))
+        self.assertIn(str(self.dep.worker_root), rw)
+        self.assertNotIn(str(self.dep.torrent_host), rw)
+        self.assertNotIn(str(self.dep.shows_host), rw)
+
+    def test_media_group_only_in_worker_and_operations(self):
         media_units = [n for n, t in self.rendered.items() if 'mediagrp' in t]
-        self.assertEqual(media_units, ['dubs-worker@.service'])
+        self.assertEqual(media_units,
+                         ['dubs-operations@.service', 'dubs-worker@.service'])
 
     def test_hardening_flags_everywhere(self):
         for name, text in self.rendered.items():
@@ -308,6 +325,37 @@ class SyncCodeTests(unittest.TestCase):
             chowns = [c for c in run.call_args_list if
                       c.args and c.args[0][:1] == ['chown']]
             self.assertEqual(chowns, [])
+
+    def test_resync_over_existing_runtime_root_keeps_operator_state(self):
+        # Re-running install against an EXISTING runtime root: fresh upstream
+        # content lands (a managed file an operator chmod'ed is re-normalized
+        # to the managed 0644 — its bytes are upstream's and units only read),
+        # while an operator-ONLY file inside a synced dir keeps its bytes,
+        # mode and owner (never chmod'ed, never chowned).
+        tmp = Path(tempfile.mkdtemp(prefix='dubs-sync4-'))
+        repo = self.build_repo(tmp)
+        dep = make_dep(tmp)
+        with mock.patch.object(cli.system, 'run', return_value=FakeProc(0)):
+            cli._sync_code(dep)
+        managed = dep.install_root / 'src' / 'runtime.py'
+        os.chmod(managed, 0o600)
+        operator = dep.install_root / 'src' / 'operator-creds.pem'
+        operator.write_text('OPERATOR KEY\n')
+        os.chmod(operator, 0o600)
+        # Upstream code changed between runs.
+        (repo / 'src' / 'runtime.py').write_text('# updated runtime\n')
+        record = []
+        with mock.patch.object(cli.system, 'run',
+                               side_effect=lambda c, **k: (record.append(list(c)),
+                                                           FakeProc(0))[1]):
+            cli._sync_code(dep)
+        self.assertEqual(managed.read_text(), '# updated runtime\n')
+        self.assertEqual(os.stat(managed).st_mode & 0o777, 0o644)
+        self.assertEqual(operator.read_text(), 'OPERATOR KEY\n')
+        self.assertEqual(os.stat(operator).st_mode & 0o777, 0o600)
+        chowned = [c[2] for c in record if c[0] == 'chown']
+        self.assertNotIn(str(managed), chowned)
+        self.assertNotIn(str(operator), chowned)
 
 
 class ConfigPermsTests(unittest.TestCase):
@@ -514,6 +562,68 @@ class FeedGateTests(unittest.TestCase):
                 contextlib.redirect_stdout(buf):
             cli._warn_transmission_parity(dep)
         self.assertNotIn('WARNING', buf.getvalue())
+
+
+class BridgeGatewayTests(unittest.TestCase):
+    """Regression: gateways come from the ACTUAL managed compose network.
+
+    The compose file declares top-level `name: dubs` with a network keyed
+    `dubs`, so Docker names it `dubs_dubs`; `dubs_default` never exists and
+    must never be probed. Only exact private gateways are ever returned.
+    """
+
+    def _inspect_out(self, name, gateways):
+        return json.dumps([{'Name': name,
+                            'IPAM': {'Config': [{'Gateway': g} for g in gateways]}}])
+
+    def test_gateways_from_the_managed_project_network_only(self):
+        record = []
+
+        def fake_run(cmd, **kwargs):
+            record.append(list(cmd))
+            if cmd[:3] == ['docker', 'network', 'inspect']:
+                if 'dubs_dubs' in cmd:
+                    return FakeProc(0, self._inspect_out(
+                        'dubs_dubs', ['172.18.0.1', '172.18.0.1', '172.19.0.1']))
+                return FakeProc(1, '')
+            return FakeProc(0)
+
+        with mock.patch.object(cli.system, 'have', return_value=True), \
+                mock.patch.object(cli.system, 'run', side_effect=fake_run):
+            gateways = cli._bridge_gateways()
+        self.assertEqual(gateways, ['172.18.0.1', '172.19.0.1'])  # dedup, order
+        inspected = [c[3] for c in record if c[:3] == ['docker', 'network', 'inspect']]
+        self.assertIn('dubs_dubs', inspected)
+        self.assertNotIn('dubs_default', inspected)   # the old wrong guess
+
+    def test_non_private_gateways_are_dropped(self):
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ['docker', 'network', 'inspect']:
+                return FakeProc(0, self._inspect_out(
+                    'dubs_dubs', ['8.8.8.8', '0.0.0.0', '::', 'garbage', '10.1.2.3']))
+            return FakeProc(0)
+
+        with mock.patch.object(cli.system, 'have', return_value=True), \
+                mock.patch.object(cli.system, 'run', side_effect=fake_run):
+            self.assertEqual(cli._bridge_gateways(), ['10.1.2.3'])
+
+    def test_missing_network_or_bad_output_is_empty(self):
+        cases = (FakeProc(1, ''),                             # network absent
+                 FakeProc(0, ''),                             # empty output
+                 FakeProc(0, 'not json'),                     # non-JSON
+                 FakeProc(0, self._inspect_out('dubs_dubs', [])))
+        for proc in cases:
+            with mock.patch.object(cli.system, 'have', return_value=True), \
+                    mock.patch.object(cli.system, 'run', return_value=proc):
+                self.assertEqual(cli._bridge_gateways(), [], proc)
+
+    def test_no_docker_runs_nothing(self):
+        record = []
+        with mock.patch.object(cli.system, 'have', return_value=False), \
+                mock.patch.object(cli.system, 'run',
+                                  side_effect=lambda c, **k: record.append(list(c))):
+            self.assertEqual(cli._bridge_gateways(), [])
+        self.assertEqual(record, [])
 
 
 class DiscoveryFailClosedTests(unittest.TestCase):

@@ -1,9 +1,12 @@
 # Dubs panel — operations role (episode retry/monitor loop).
-# Talks to Sonarr/Transmission APIs; touches no media files at all (torrents
+# Talks to Sonarr/Transmission APIs; all WRITES go through those APIs (torrents
 # are added over the Transmission RPC, library changes over the Sonarr API).
-# Runs on the backend uid with the private backend group (owns the
-# transmission/prowlarr credentials it needs) plus the shared status group
-# (reads web-owned preferences and the web's job-request markers).
+# The compose PGID media group is a supplementary group ONLY so the space
+# guard can statvfs/read the torrent and shows mounts (storage_ready); the
+# systemd sandbox keeps every media path read-only here. Runs on the backend
+# uid with the private backend group (owns the transmission/prowlarr
+# credentials it needs) plus the shared status group (reads web-owned
+# preferences and the web's job-request markers).
 # systemctl enable dubs-operations@main
 
 [Unit]
@@ -15,7 +18,9 @@ Wants=network-online.target
 Type=simple
 User=@WORKER_USER@
 Group=@BACKEND_GROUP@
-SupplementaryGroups=@SHARED_GROUP@
+# Shared status group (read web-owned preferences, write public job output)
+# + compose PGID media group (READ-ONLY media access for the space guard).
+SupplementaryGroups=@SHARED_GROUP@ @MEDIA_GROUP@
 Environment=SERIES_CONTROL_ROLE=operations
 Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
 Environment=SERIES_CONTROL_STATE_ROOT=@STATE_ROOT@
@@ -33,7 +38,7 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=@WORKER_ROOT@ @COVERS@
-ReadOnlyPaths=@STATE_ROOT@ @CONFIG_ROOT@ @FEED_STATE@
+ReadOnlyPaths=@STATE_ROOT@ @CONFIG_ROOT@ @FEED_STATE@ -@TORRENT_HOST@ -@SHOWS_HOST@
 
 [Install]
 WantedBy=multi-user.target
