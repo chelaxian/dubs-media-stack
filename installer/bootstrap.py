@@ -248,7 +248,7 @@ class Arr:
             'baseUrl': app_base_url, 'prowlarrUrl': prowlarr_internal_url,
             'apiKey': app_api_key})
         template.update({'name': name, 'syncLevel': 'fullSync',
-                         'enable': True, 'tags': []})
+                         'tags': []})
         existing = next((a for a in self.call('applications')
                          if a.get('name') == name), None)
         if existing:
@@ -319,6 +319,7 @@ class Arr:
                                minimum_seeders=MINIMUM_SEEDERS):
         """Managed Prowlarr indexer (sync) profile with minimumSeeders.
 
+        API v1 /appprofile; indexers reference its id as appProfileId.
         Real shape: {name, enableRss, enableAutomaticSearch,
         enableInteractiveSearch, minimumSeeders, id}. minimumSeeders lives
         here (used for app sync / adding trackers), NOT in quality profiles.
@@ -327,13 +328,13 @@ class Arr:
         """
         payload = {'name': name, 'enableRss': True, 'enableAutomaticSearch': True,
                    'enableInteractiveSearch': True, 'minimumSeeders': minimum_seeders}
-        existing = next((p for p in self.call('indexerprofile') or []
+        existing = next((p for p in self.call('appprofile') or []
                          if p.get('name') == name), None)
         if existing:
             payload['id'] = existing['id']
-            return self.call('indexerprofile/%d' % existing['id'], 'PUT',
+            return self.call('appprofile/%d' % existing['id'], 'PUT',
                              payload)['id']
-        return self.call('indexerprofile', 'POST', payload)['id']
+        return self.call('appprofile', 'POST', payload)['id']
 
     # -- managed studio clone refresh -----------------------------------------
 

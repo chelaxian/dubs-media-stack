@@ -420,10 +420,14 @@ if SMOKE:
                 self.assertEqual(fields['baseUrl'], 'http://%s:%d' % (
                     impl.lower(), PORTS[impl.lower()]))
                 self.assertTrue(fields['apiKey'])
-            profiles = [p for p in prowlarr.call('indexerprofile')
+            profiles = [p for p in prowlarr.call('appprofile')
                         if p['name'] == 'Dubs']
             self.assertEqual(len(profiles), 1)
             self.assertEqual(profiles[0]['minimumSeeders'], 3)
+            self.assertEqual(profiles[0]['id'],
+                             self.report['prowlarr_indexer_profile']['id'])
+            for key in ('enableRss', 'enableAutomaticSearch', 'enableInteractiveSearch'):
+                self.assertTrue(profiles[0][key])
 
         def test_03_custom_import_list_future_only(self):
             sonarr = self.arr('sonarr')

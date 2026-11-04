@@ -36,7 +36,10 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  XCTAssertTrue([events waitForExistenceWithTimeout:10]);[events tap];
  XCUIElement *dialog=app.alerts[@"События и уведомления"];
  XCTAssertTrue([dialog waitForExistenceWithTimeout:5]);
- NSString *message=dialog.staticTexts.firstMatch.label;
+ NSPredicate *statusMessage=[NSPredicate predicateWithFormat:@"label CONTAINS %@",@"Уведомления на этом устройстве"];
+ XCUIElement *messageElement=[[dialog.staticTexts matchingPredicate:statusMessage] firstMatch];
+ XCTAssertTrue([messageElement waitForExistenceWithTimeout:5],@"expected notification status message");
+ NSString *message=messageElement.label;
  XCTAssertTrue([message containsString:@"выключены"],@"default state must be honest OFF, got: %@",message);
  XCTAssertTrue([app.alerts.buttons[@"Включить уведомления на устройстве"] exists]);
  XCTAssertTrue([app.alerts.buttons[@"Типы событий (аккаунт)"] exists]);
@@ -46,6 +49,9 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  XCUIElement *again=app.buttons[@"events-settings"];
  XCTAssertTrue([again waitForExistenceWithTimeout:10]);[again tap];
  XCTAssertTrue([app.alerts[@"События и уведомления"] waitForExistenceWithTimeout:5]);
+ XCUIElement *persistedMessage=[[app.alerts[@"События и уведомления"].staticTexts matchingPredicate:statusMessage] firstMatch];
+ XCTAssertTrue([persistedMessage waitForExistenceWithTimeout:5],@"expected notification status message after relaunch");
+ XCTAssertTrue([persistedMessage.label containsString:@"выключены"],@"state must persist as OFF across launches, got: %@",persistedMessage.label);
  XCTAssertTrue([app.alerts.buttons[@"Включить уведомления на устройстве"] exists],@"state persists across launches");
  [app.alerts.buttons[@"Закрыть"] tap];
 }

@@ -59,7 +59,7 @@ class FakeStack:
         # Fresh-install seeds: Lidarr/Prowlarr ship default objects.
         self.add('lidarr', 'qualityprofile', {'name': 'Any'})
         self.add('lidarr', 'metadataprofile', {'name': 'Standard'})
-        self.add('prowlarr', 'indexerprofile',
+        self.add('prowlarr', 'appprofile',
                  {'name': 'Standard', 'enableRss': True,
                   'enableAutomaticSearch': False, 'enableInteractiveSearch': False,
                   'minimumSeeders': 1})
@@ -87,6 +87,17 @@ class FakeStack:
                 return 404, {'error': 'no schema for %s' % path}
             return 200, copy.deepcopy(schema)
         collection, _, rest = path.partition('/')
+        if app == 'prowlarr':
+            # Official API v1: AppProfileResource and IndexerResource.appProfileId.
+            if collection not in ('appprofile', 'applications', 'indexer'):
+                return 404, {}
+            if collection == 'appprofile' and method in ('POST', 'PUT'):
+                expected = {'name', 'enableRss', 'enableAutomaticSearch',
+                            'enableInteractiveSearch', 'minimumSeeders'}
+                if rest:
+                    expected.add('id')
+                if set(data) != expected:
+                    return 400, {'error': 'invalid AppProfileResource fields'}
         if collection == 'downloadclient' and method in ('POST', 'PUT'):
             fields = {f['name']: f.get('value') for f in data.get('fields', [])}
             for prefix in ('tv', 'movie', 'music'):
@@ -362,27 +373,52 @@ class BootstrapContractTests(unittest.TestCase):
 
     # 5. Prowlarr managed indexer profile (minimumSeeders lives here) ---------
 
+    def test_prowlarr_rejects_nonexistent_profile_route(self):
+        stack = FakeStack()
+        with patch.object(bs.requests, 'request', side_effect=stack.request):
+            with self.assertRaisesRegex(bs.ArrError, 'HTTP 404'):
+                bs.Arr('prowlarr', BASES['prowlarr'], 'key').call('indexerprofile')
+
     def test_prowlarr_managed_indexer_profile_minimum_seeders(self):
         stack = FakeStack()
+        user_id = stack.add('prowlarr', 'appprofile', {
+            'name': 'My profile', 'enableRss': False,
+            'enableAutomaticSearch': True, 'enableInteractiveSearch': False,
+            'minimumSeeders': 17})
+        stack.add('prowlarr', 'indexer', {'name': 'My tracker',
+                                        'appProfileId': user_id, 'enable': True})
+        before_profiles = stack.objects('prowlarr', 'appprofile')
+        before_indexers = stack.objects('prowlarr', 'indexer')
         report = run_bootstrap(stack)
-        created = stack.posted('prowlarr', 'indexerprofile')[0]
+        created = stack.posted('prowlarr', 'appprofile')[0]
         self.assertEqual(created['name'], 'Dubs')
         self.assertEqual(created['minimumSeeders'], 3)
         self.assertTrue(created['enableRss'])
         self.assertTrue(created['enableAutomaticSearch'])
         self.assertTrue(created['enableInteractiveSearch'])
-        managed = next(p for p in stack.objects('prowlarr', 'indexerprofile')
+        managed = next(p for p in stack.objects('prowlarr', 'appprofile')
                        if p['name'] == 'Dubs')
         self.assertEqual(report['prowlarr_indexer_profile'],
                          {'name': 'Dubs', 'id': managed['id'],
                           'minimumSeeders': 3})
         self.assertNotIn('qualityprofile', stack.state['prowlarr'])
-        # Standard is never touched; re-run updates only the managed profile.
-        run_bootstrap(stack)
-        self.assertFalse(stack.puts('prowlarr', 'indexerprofile/1'))
-        self.assertEqual(stack.puts('prowlarr', 'indexerprofile/%d'
+        # Re-run repairs a stale managed profile without changing user objects.
+        stored = next(p for p in stack.state['prowlarr']['appprofile']
+                      if p['id'] == managed['id'])
+        stored.update(minimumSeeders=99, enableRss=False)
+        report2 = run_bootstrap(stack)
+        self.assertEqual(report2['prowlarr_indexer_profile'],
+                         report['prowlarr_indexer_profile'])
+        self.assertEqual(stack.objects('prowlarr', 'appprofile')[:-1], before_profiles)
+        self.assertEqual(stack.objects('prowlarr', 'indexer'), before_indexers)
+        self.assertEqual(len(stack.posted('prowlarr', 'appprofile')), 1)
+        repaired = stack.objects('prowlarr', 'appprofile')[-1]
+        self.assertTrue(repaired['enableRss'])
+        self.assertEqual(repaired['minimumSeeders'], 3)
+        self.assertFalse(stack.puts('prowlarr', 'appprofile/1'))
+        self.assertEqual(stack.puts('prowlarr', 'appprofile/%d'
                                     % managed['id'])[0]['minimumSeeders'], 3)
-        standard = stack.objects('prowlarr', 'indexerprofile')[0]
+        standard = stack.objects('prowlarr', 'appprofile')[0]
         self.assertEqual(standard['minimumSeeders'], 1)
 
     # 6. No silent overwrites; managed clone refresh --------------------------
