@@ -54,18 +54,25 @@
  [self waitForConnect:connect enabled:YES];[connect tap];
  [self expectationForPredicate:[NSPredicate predicateWithFormat:@"exists == NO"] evaluatedWithObject:field handler:nil];
  [self waitForExpectationsWithTimeout:5 handler:nil];
- // Saving follows asynchronous website-data removal. Observe the saved home
- // through the real settings dialog before terminating the process.
- NSPredicate *saved=[NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings){
+ // Saving follows asynchronous website-data removal. Reopen and close the
+ // real dialog in order; predicate evaluations must never perform UI actions.
+ NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+10;
+ NSString *savedValue=nil;
+ for(NSUInteger attempt=0;attempt<5&&NSProcessInfo.processInfo.systemUptime<deadline;attempt++){
   if(app.alerts.buttons[@"ОК"].exists)[app.alerts.buttons[@"ОК"] tap];
-  if(!field.exists)[app.buttons[@"server-settings"] tap];
-  if(!field.exists)return NO;
-  BOOL matches=[field.value isEqualToString:normalized];
-  if(app.buttons[@"Отмена"].exists)[app.buttons[@"Отмена"] tap];
-  return matches;
- }];
- [self expectationForPredicate:saved evaluatedWithObject:app handler:nil];
- [self waitForExpectationsWithTimeout:10 handler:nil];
+  [app.buttons[@"server-settings"] tap];
+  NSTimeInterval remaining=deadline-NSProcessInfo.processInfo.systemUptime;
+  XCTAssertGreaterThan(remaining,0,@"Timed out reopening saved server settings");
+  XCTAssertTrue([field waitForExistenceWithTimeout:MIN(2,MAX(0,remaining))]);
+  savedValue=[field.value copy];
+  XCUIElement *cancel=app.buttons[@"Отмена"];
+  XCTAssertTrue(cancel.exists,@"Saved server settings must be cancellable");
+  [cancel tap];
+  [self expectationForPredicate:[NSPredicate predicateWithFormat:@"exists == NO"] evaluatedWithObject:field handler:nil];
+  [self waitForExpectationsWithTimeout:2 handler:nil];
+  if([savedValue isEqualToString:normalized])break;
+ }
+ XCTAssertEqualObjects(savedValue,normalized,@"New server must be saved before relaunch");
  [app terminate];[app launch];
  XCTAssertFalse([app.textFields[@"server-address"] waitForExistenceWithTimeout:2]);
  if(app.alerts.count)[app.alerts.buttons[@"ОК"] tap];
