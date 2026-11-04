@@ -54,25 +54,12 @@
  [self waitForConnect:connect enabled:YES];[connect tap];
  [self expectationForPredicate:[NSPredicate predicateWithFormat:@"exists == NO"] evaluatedWithObject:field handler:nil];
  [self waitForExpectationsWithTimeout:5 handler:nil];
- // Saving follows asynchronous website-data removal. Reopen and close the
- // real dialog in order; predicate evaluations must never perform UI actions.
- NSTimeInterval deadline=NSProcessInfo.processInfo.systemUptime+10;
- NSString *savedValue=nil;
- for(NSUInteger attempt=0;attempt<5&&NSProcessInfo.processInfo.systemUptime<deadline;attempt++){
-  if(app.alerts.buttons[@"ОК"].exists)[app.alerts.buttons[@"ОК"] tap];
-  [app.buttons[@"server-settings"] tap];
-  NSTimeInterval remaining=deadline-NSProcessInfo.processInfo.systemUptime;
-  XCTAssertGreaterThan(remaining,0,@"Timed out reopening saved server settings");
-  XCTAssertTrue([field waitForExistenceWithTimeout:MIN(2,MAX(0,remaining))]);
-  savedValue=[field.value copy];
-  XCUIElement *cancel=app.buttons[@"Отмена"];
-  XCTAssertTrue(cancel.exists,@"Saved server settings must be cancellable");
-  [cancel tap];
-  [self expectationForPredicate:[NSPredicate predicateWithFormat:@"exists == NO"] evaluatedWithObject:field handler:nil];
-  [self waitForExpectationsWithTimeout:2 handler:nil];
-  if([savedValue isEqualToString:normalized])break;
- }
- XCTAssertEqualObjects(savedValue,normalized,@"New server must be saved before relaunch");
+ // Observe the selected server only after asynchronous website-data removal
+ // and preference commit. Predicate evaluation performs no UI actions.
+ XCUIElement *settings=app.buttons[@"server-settings"];
+ [self expectationForPredicate:[NSPredicate predicateWithFormat:@"value == %@",normalized] evaluatedWithObject:settings handler:nil];
+ [self waitForExpectationsWithTimeout:60 handler:nil];
+ XCTAssertEqualObjects(settings.value,normalized,@"New server must be saved before relaunch");
  [app terminate];[app launch];
  XCTAssertFalse([app.textFields[@"server-address"] waitForExistenceWithTimeout:2]);
  if(app.alerts.count)[app.alerts.buttons[@"ОК"] tap];

@@ -7,6 +7,7 @@
 @interface PanelController : UIViewController <WKNavigationDelegate,WKUIDelegate,UNUserNotificationCenterDelegate>
 @property(nonatomic,strong) WKWebView *web;
 @property(nonatomic,strong) NSURL *serverURL;
+@property(nonatomic,weak) UIButton *serverSettingsButton;
 @property(nonatomic,assign) BOOL switchingServer;
 - (void)evaluateJavaScriptString:(NSString *)script;
 - (void)applyRoute:(NSString *)hash;
@@ -285,6 +286,9 @@ static __weak PanelController *activePanel;
  c.scheme=@"https";c.host=c.host.lowercaseString;if(c.port.intValue==443)c.port=nil;c.path=@"/";return c.URL;
 }
 - (NSURL *)home{return self.serverURL;}
+- (void)updateServerSettingsAccessibilityValue{
+ self.serverSettingsButton.accessibilityValue=self.home.absoluteString?:@"Сервер не выбран";
+}
 - (BOOL)panel:(NSURL *)u{return self.home&&[u.scheme isEqual:@"https"]&&[u.host.lowercaseString isEqual:self.home.host.lowercaseString]&&!u.user&&!u.password&&(u.port.intValue?:443)==(self.home.port.intValue?:443);}
 - (BOOL)library:(NSURL *)u{
  if(![u.scheme isEqual:@"https"]||!u.host.length||u.user||u.password||u.query||![u.path isEqual:@"/web/"])return NO;
@@ -295,7 +299,7 @@ static __weak PanelController *activePanel;
  if(self.presentedViewController)return;
  UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Адрес веб-панели" message:@"Укажите HTTPS-адрес панели Dubs с действительным сертификатом. При смене сервера потребуется войти заново." preferredStyle:UIAlertControllerStyleAlert];
  [a addTextFieldWithConfigurationHandler:^(UITextField *field){field.placeholder=@"https://panel.example.org";field.text=self.home.absoluteString?:@"";field.keyboardType=UIKeyboardTypeURL;field.autocapitalizationType=UITextAutocapitalizationTypeNone;field.autocorrectionType=UITextAutocorrectionTypeNo;field.accessibilityIdentifier=@"server-address";[field addTarget:self action:@selector(serverAddressChanged:) forControlEvents:UIControlEventEditingChanged];}];
- [a addAction:[UIAlertAction actionWithTitle:@"Подключиться" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){NSURL *next=[self normalizedServer:a.textFields.firstObject.text];if(!next){dispatch_async(dispatch_get_main_queue(),^{[self serverSettings];});return;}if([next isEqual:self.home]){[self.web loadRequest:[NSURLRequest requestWithURL:next]];return;}self.switchingServer=YES;[self.web stopLoading];[self.web loadHTMLString:@"" baseURL:nil];[DubsEvents wipe:self revoke:NO];NSSet *types=WKWebsiteDataStore.allWebsiteDataTypes;[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:types modifiedSince:NSDate.distantPast completionHandler:^{self.serverURL=next;[NSUserDefaults.standardUserDefaults setObject:next.absoluteString forKey:@"panel_url"];self.switchingServer=NO;[self.web loadRequest:[NSURLRequest requestWithURL:next]];}];}]];
+ [a addAction:[UIAlertAction actionWithTitle:@"Подключиться" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){NSURL *next=[self normalizedServer:a.textFields.firstObject.text];if(!next){dispatch_async(dispatch_get_main_queue(),^{[self serverSettings];});return;}if([next isEqual:self.home]){[self.web loadRequest:[NSURLRequest requestWithURL:next]];return;}self.switchingServer=YES;[self.web stopLoading];[self.web loadHTMLString:@"" baseURL:nil];[DubsEvents wipe:self revoke:NO];NSSet *types=WKWebsiteDataStore.allWebsiteDataTypes;[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:types modifiedSince:NSDate.distantPast completionHandler:^{self.serverURL=next;[NSUserDefaults.standardUserDefaults setObject:next.absoluteString forKey:@"panel_url"];[self updateServerSettingsAccessibilityValue];self.switchingServer=NO;[self.web loadRequest:[NSURLRequest requestWithURL:next]];}];}]];
  a.actions.firstObject.enabled=self.home!=nil;
  if(self.home)[a addAction:[UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil]];
  [self presentViewController:a animated:YES completion:nil];
@@ -375,7 +379,7 @@ static __weak PanelController *activePanel;
  self.web=[[WKWebView alloc]initWithFrame:CGRectZero configuration:config];self.web.navigationDelegate=self;self.web.UIDelegate=self;self.web.allowsBackForwardNavigationGestures=YES;self.web.opaque=NO;self.web.backgroundColor=UIColor.blackColor;self.web.scrollView.backgroundColor=UIColor.blackColor;self.web.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.web];UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
  [NSLayoutConstraint activateConstraints:@[[self.web.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[self.web.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],[self.web.topAnchor constraintEqualToAnchor:safe.topAnchor],[self.web.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor]]];
  UIRefreshControl *refresh=[UIRefreshControl new];refresh.tintColor=UIColor.systemRedColor;[refresh addTarget:self action:@selector(reload:) forControlEvents:UIControlEventValueChanged];self.web.scrollView.refreshControl=refresh;if(self.home)[self.web loadRequest:[NSURLRequest requestWithURL:self.home]];
- UIButton *settings=[UIButton buttonWithType:UIButtonTypeSystem];[settings setTitle:@"⚙ Сервер" forState:UIControlStateNormal];settings.accessibilityLabel=@"Настройки адреса веб-панели";settings.accessibilityIdentifier=@"server-settings";[settings addTarget:self action:@selector(serverSettings) forControlEvents:UIControlEventTouchUpInside];settings.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:settings];
+ UIButton *settings=[UIButton buttonWithType:UIButtonTypeSystem];[settings setTitle:@"⚙ Сервер" forState:UIControlStateNormal];settings.accessibilityLabel=@"Настройки адреса веб-панели";settings.accessibilityIdentifier=@"server-settings";[settings addTarget:self action:@selector(serverSettings) forControlEvents:UIControlEventTouchUpInside];settings.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:settings];self.serverSettingsButton=settings;[self updateServerSettingsAccessibilityValue];
  UIButton *events=[UIButton buttonWithType:UIButtonTypeSystem];[events setTitle:@"🔔" forState:UIControlStateNormal];events.accessibilityLabel=@"События и уведомления на этом устройстве";events.accessibilityIdentifier=@"events-settings";[events addTarget:self action:@selector(eventsSettings) forControlEvents:UIControlEventTouchUpInside];events.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:events];
  [NSLayoutConstraint activateConstraints:@[[events.trailingAnchor constraintEqualToAnchor:settings.leadingAnchor constant:-8],[events.topAnchor constraintEqualToAnchor:safe.topAnchor],[events.heightAnchor constraintEqualToConstant:44],[events.widthAnchor constraintEqualToConstant:44]]];
  [NSLayoutConstraint activateConstraints:@[[settings.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],[settings.topAnchor constraintEqualToAnchor:safe.topAnchor],[settings.heightAnchor constraintEqualToConstant:44],[settings.widthAnchor constraintEqualToConstant:100]]];
