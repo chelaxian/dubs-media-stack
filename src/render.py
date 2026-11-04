@@ -13,6 +13,12 @@ def render(m,csrf):
  token='<input type="hidden" name="csrf" value="'+e(csrf)+'">';prefs=m.load('preferences.json',{});status=m.load('cleanup-status.json',{});auth=m.load('myshows-auth.json',{});entries=m.watching();health=json.loads((rt.feed_state_root()/'status.json').read_text())
  cleanup_on=rt.cleanup_enabled();cleanup_note='' if cleanup_on else '<p class="notice">Автоочистка отключена оператором (cleanup_enable). Включите её в config.json, если нужен автоматический выпуск места.</p>'
  body='<header class="masthead"><div class="brand"><span class="mark">M</span><span>МОЯ МЕДИАТЕКА</span></div><a class="profile" href="#settings">'+icon('user')+e(label)+'</a><form method="post" action="/logout">'+token+'<button class="quiet logout">Выйти</button></form></header><div class="toolbar" id="watching"><div class="heading"><div><p class="eyebrow">ВАШ ЛИЧНЫЙ СПИСОК</p><h1 id="view-title">Озвучка</h1></div><span class="counter"><span id="visible-count" aria-live="polite">'+str(len(entries))+'</span> <span id="count-unit">сериалов</span></span></div><div class="search">'+icon('search')+'<input type="search" id="series-search" aria-label="Поиск в моих сериалах" placeholder="Найти сериал" autocomplete="off"></div><nav class="tabs" aria-label="Разделы"><a class="active" data-tab="voice" href="#voice">Озвучка</a><a data-tab="released" href="#released">Вышло</a><a data-tab="upcoming" href="#upcoming">Будет</a><a data-tab="settings" href="#settings">Настройки</a></nav></div><p class="sync-line">MyShows · синхронизация <strong>'+e(time_label(health.get('updated')))+'</strong></p><section id="voice-view" class="series-list" aria-label="Сериалы, которые я смотрю">'
+ badge_prefs={}
+ for sid,p in prefs.items():
+  idx=rt.resolve_studio(m.STUDIOS,p.get('studio'))
+  if idx is not None:badge_prefs[str(sid)]=m.STUDIOS[idx]['name']
+ badge_config={'studios':[x['name'] for x in m.STUDIOS],'preferred':badge_prefs}
+ body+='<div id="media-badge-config" hidden data-config="'+e(json.dumps(badge_config,ensure_ascii=False))+'"></div>'
  for index,entry in enumerate(entries):
   sr=entry['series'];sid=sr['id'];p=prefs.get(str(sid),{});choice=p.get('studio');idx=rt.resolve_studio(m.STUDIOS,choice);voice=m.STUDIOS[idx]['name'] if idx is not None else 'Общий приоритет озвучек';options='<option value="-1">По умолчанию</option>'
   for i,x in enumerate(m.STUDIOS):options+=f'<option value="{i}"'+(' selected' if idx==i else '')+'>'+e(x['name'])+'</option>'

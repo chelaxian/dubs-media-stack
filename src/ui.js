@@ -256,10 +256,47 @@ function mediaInfo(e) {
     source: m.source === "jellyfin" || m.source === "sonarr" ? m.source : null
   };
 }
-function mediaShort(info) {
-  if (info.status === "verified") return info.quality != null && info.quality.label ? String(info.quality.label) : "Проверено";
+// Only canonical studio metadata participates; raw tags and filenames are not evidence.
+function studioAbbreviation(value) {
+  const name = String(value || "").toLowerCase().replace(/\s+/g, " ").replace(/\s*\/\s*/g, " / ").trim();
+  const aliases = [
+    ["К-Б", "кураж-бамбей", "кураж-бомбей"], ["КвК", "кубик в кубе"],
+    ["Nova", "novamedia", "novafilm", "novamedia / novafilm"], ["RHS", "red head sound"],
+    ["Lost", "lostfilm"], ["HDr", "hdrezka studio", "hdrezka18+", "hdrezka 18+", "hdrezka"],
+    ["Alex", "alexfilm"], ["VP", "viruse project", "virus project"],
+    ["DMS", "dragon money studio", "dms"], ["RUd", "rudub"],
+    ["LE-P", "le-production"], ["Cold", "coldfilm"],
+    ["SNDK", "сыендук", "syenduk", "sndk", "сыендук / syenduk / sndk"]
+  ];
+  for (const row of aliases) if (row.slice(1).includes(name)) return row[0];
+  return "?";
+}
+function mediaVoice(info, episode) {
+  const configNode = $("media-badge-config");
+  const config = configNode ? JSON.parse(configNode.getAttribute("data-config")) : { studios: [], preferred: {} };
+  const actual = info.tracks.map((t) => studioAbbreviation(t.studio));
+  const present = (studio) => studio && info.tracks.some((t) => t.studio && (
+    String(t.studio).toLowerCase() === String(studio).toLowerCase() ||
+    (studioAbbreviation(studio) !== "?" && studioAbbreviation(t.studio) === studioAbbreviation(studio))));
+  const preferred = config.preferred[String(episode.seriesId)];
+  if (present(preferred)) return studioAbbreviation(preferred);
+  for (const studio of config.studios) {
+    const abbreviation = studioAbbreviation(studio);
+    if (present(studio)) return abbreviation;
+  }
+  // Without a ranking, a single known studio is unambiguous. Multiple are unknown.
+  const known = actual.filter((value, index) => value !== "?" && actual.indexOf(value) === index);
+  return known.length === 1 ? known[0] : "?";
+}
+function mediaShort(info, episode) {
   if (info.status === "stale") return "Устарело";
-  return "Не подтверждено";
+  if (info.status !== "verified") return "Не подтверждено";
+  const q = info.quality || {};
+  // The localMedia schema supplies a trusted label, not a resolution field.
+  // Nominal labels retain scan type and outrank cropped stream dimensions.
+  const label = String(q.label || "").match(/\b([1-9][0-9]{2,4})[pi]\b/i);
+  const resolution = label ? label[0] : typeof q.height === "number" && Number.isInteger(q.height) && q.height > 0 && q.height < 100000 ? q.height + "p" : "Проверено";
+  return resolution + " " + mediaVoice(info, episode);
 }
 function channelLabel(channels) {
   if (channels === 6) return "5.1";
@@ -272,8 +309,9 @@ function mediaDetails(e) {
   const info = mediaInfo(e);
   if (!info) return null;
   const id = "media-panel-" + e.id;
-  const toggle = node("button", mediaShort(info), "media-badge is-" + info.status);
+  const toggle = node("button", mediaShort(info, e), "media-badge is-" + info.status);
   toggle.type = "button";
+  toggle.setAttribute("aria-label", toggle.textContent + ": качество и аудиодорожки");
   toggle.setAttribute("aria-expanded", "false");
   toggle.setAttribute("aria-controls", id);
   const panel = node("div", void 0, "media-panel");
@@ -349,8 +387,9 @@ function controls(e, text) {
   find.type = "button";
   find.disabled = !e.sonarrId;
   find.addEventListener("click", () => openSearch(e));
-  box.append(task || download, find);
+  box.append(task || download);
   if (media) box.append(media.toggle);
+  box.append(find);
   if (media && text) text.append(media.panel);
   if (((_c2 = currentTask(e)) == null ? void 0 : _c2.state) === "error") box.append(node("small", currentTask(e).message, "download-caption"));
   const watched = node("button", "✓", "watch-button");

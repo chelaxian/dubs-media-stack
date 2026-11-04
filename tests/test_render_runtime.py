@@ -53,6 +53,19 @@ class RenderRuntime(unittest.TestCase):
   self.assertIn('Сыендук', page)          # named studio preference displayed
   self.assertIn('ТОЛЬКО ЭТА', page)       # strict mode badge
 
+ def test_badge_metadata_uses_current_order_and_resolved_saved_choices(self):
+  import html, re
+  studios=[{'name':'LostFilm'},{'name':'Кураж-Бамбей'},{'name':'<unsafe "studio">'}]
+  preferences={'7':{'studio':1,'secret':'never expose'},'8':{'studio':'LostFilm'},'9':{'studio':-1}}
+  with patch.object(m,'watching',return_value=[]), patch.object(m,'STUDIOS',studios), \
+       patch.object(m,'load',side_effect=lambda name,default: preferences if name=='preferences.json' else default):
+   page=ui.render(m,'c'*43)
+  encoded=re.search(r'id="media-badge-config" hidden data-config="([^"]*)"',page).group(1)
+  config=json.loads(html.unescape(encoded))
+  self.assertEqual(config,{'studios':[x['name'] for x in studios],'preferred':{'7':'Кураж-Бамбей','8':'LostFilm'}})
+  self.assertNotIn('never expose',page)
+  self.assertNotIn('<unsafe "studio">',encoded)
+
 
 if __name__ == '__main__':
  unittest.main()
