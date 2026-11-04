@@ -53,6 +53,11 @@ static void KeychainDeleteToken(void){
  SecItemDelete((__bridge CFDictionaryRef)query);
 }
 static NSUInteger EventsGeneration;
+static BOOL ValidCounter(id value){
+ if(![value isKindOfClass:NSNumber.class]||CFGetTypeID((__bridge CFTypeRef)value)==CFBooleanGetTypeID())return NO;
+ const char *type=[value objCType];
+ return type[0]!='f'&&type[0]!='d'&&[value longLongValue]>=0;
+}
 static BOOL ValidInstance(id value){return [value isKindOfClass:NSString.class]&&[[NSPredicate predicateWithFormat:@"SELF MATCHES %@",@"[a-fA-F0-9]{32}"]evaluateWithObject:value];}
 static NSDictionary *EventsDefaults(void){return [[NSUserDefaults standardUserDefaults]dictionaryForKey:@"dubs.events.state"]?:@{};}
 static void EventsSetDefaults(NSDictionary *state){[[NSUserDefaults standardUserDefaults]setObject:state forKey:@"dubs.events.state"];}
@@ -193,7 +198,7 @@ static BOOL pollLocked;
  NSString *instance=json[@"instanceId"];
  if(!ValidInstance(instance))return NO;
  NSNumber *cursor=json[@"cursor"];
- if(![cursor isKindOfClass:NSNumber.class]||cursor.longLongValue<0)return NO;
+ if(!ValidCounter(cursor))return NO;
  BOOL rebase=instance&&state[@"instanceId"]&&![instance isEqual:state[@"instanceId"]];
  NSMutableDictionary *next=[state mutableCopy];
  if(instance)next[@"instanceId"]=instance;
@@ -206,7 +211,7 @@ static BOOL pollLocked;
  NSArray *events=[json[@"events"]isKindOfClass:NSArray.class]?json[@"events"]:@[];
  if(events.count>100)return NO;
  long long last=[state[@"cursor"]longLongValue];
- for(id item in events){if(![item isKindOfClass:NSDictionary.class]||![item[@"id"]isKindOfClass:NSNumber.class]||[item[@"id"]longLongValue]<=last||![item[@"type"]isKindOfClass:NSString.class]||!TypeLabels()[item[@"type"]])return NO;last=[item[@"id"]longLongValue];}
+ for(id item in events){if(![item isKindOfClass:NSDictionary.class]||!ValidCounter(item[@"id"])||[item[@"id"]longLongValue]<=last||![item[@"type"]isKindOfClass:NSString.class]||!TypeLabels()[item[@"type"]])return NO;last=[item[@"id"]longLongValue];}
  if(cursor.longLongValue<last)return NO;
  for(NSDictionary *event in events){
   if(![event isKindOfClass:NSDictionary.class])continue;
@@ -236,7 +241,7 @@ static BOOL pollLocked;
  content.title=title;
  content.body=showTitles?message:generic; /* privacy default: generic only */
  content.sound=[UNNotificationSound defaultSound];
- long long episodeId=[event[@"episodeId"]isKindOfClass:NSNumber.class]?[event[@"episodeId"]longLongValue]:0;
+ long long episodeId=ValidCounter(event[@"episodeId"])?[event[@"episodeId"]longLongValue]:0;
  NSMutableDictionary *info=[NSMutableDictionary dictionary];
  info[@"eventId"]=@(eventId);
  if(episodeId>0&&episodeId<=9999999999LL)info[@"episodeId"]=@(episodeId);else info[@"section"]=@"events";
@@ -347,7 +352,7 @@ static __weak PanelController *activePanel;
   if(errorField){[self notice:[NSString stringWithFormat:@"Регистрация не удалась: %@.",errorField] browser:nil];return;}
   NSString *token=[parsed[@"token"]isKindOfClass:NSString.class]?parsed[@"token"]:nil;
   NSString *deviceId=[parsed[@"deviceId"]isKindOfClass:NSString.class]?parsed[@"deviceId"]:nil;
-  NSNumber *cursor=[parsed[@"cursor"]isKindOfClass:NSNumber.class]?parsed[@"cursor"]:nil;
+  NSNumber *cursor=ValidCounter(parsed[@"cursor"])?parsed[@"cursor"]:nil;
   NSString *instanceId=ValidInstance(parsed[@"instanceId"])?parsed[@"instanceId"]:nil;
   NSPredicate *tokenShape=[NSPredicate predicateWithFormat:@"SELF MATCHES %@",@"[A-Za-z0-9_-]{43}"];
   if(![tokenShape evaluateWithObject:token]||!deviceId.length||!cursor||cursor.longLongValue<0||!instanceId){[self notice:@"Регистрация не удалась: некорректный ответ сервера." browser:nil];return;}

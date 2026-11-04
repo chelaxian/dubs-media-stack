@@ -56,6 +56,8 @@
 - (void)testMalformedEpochAndRegressingCursorFailClosed{
  NSDictionary *state=[self state];
  XCTAssertFalse([DubsEvents consume:[self page:@"7" cursor:@9] state:state]);
+ XCTAssertFalse([DubsEvents consume:[self page:state[@"instanceId"] cursor:@YES] state:state]);
+ XCTAssertFalse([DubsEvents consume:[self page:state[@"instanceId"] cursor:@1.5] state:state]);
  XCTAssertFalse([DubsEvents consume:[self page:state[@"instanceId"] cursor:@0] state:state]);
  XCTAssertEqualObjects([NSUserDefaults.standardUserDefaults dictionaryForKey:@"dubs.events.state"][@"cursor"],@1);
 }
