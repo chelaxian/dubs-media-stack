@@ -435,7 +435,8 @@ if SMOKE:
                      if l['name'] == 'MyShows watching (Dubs feed)']
             self.assertEqual(len(lists), 1)
             entry = lists[0]
-            self.assertEqual(self.field_map(entry).get('baseUrl'), self.feed_url)
+            self.assertEqual(self.field_map(entry).get('baseUrl'),
+                             self.feed_url + '/series')
             self.assertEqual(entry.get('shouldMonitor'), 'future')
             self.assertEqual(entry.get('monitorNewItems'), 'all')
             self.assertFalse(entry.get('searchForMissingEpisodes'))

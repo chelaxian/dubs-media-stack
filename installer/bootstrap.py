@@ -527,9 +527,12 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         'minimumSeeders': MINIMUM_SEEDERS,
     }
 
-    # 5. MyShows feed CustomImport list (FUTURE monitoring only, never backlog).
+    # 5. CustomImport fetches the supplied URL directly; feed_url is the
+    # server base (also used for /health), while the JSON list lives at /series.
+    # FUTURE monitoring only, never backlog.
     report['import_list'] = sonarr.ensure_custom_import_list(
-        'MyShows watching (Dubs feed)', feed_url, p2160, root_folder_path='/tv')
+        'MyShows watching (Dubs feed)', feed_url.rstrip('/') + '/series',
+        p2160, root_folder_path='/tv')
     return report
 
 

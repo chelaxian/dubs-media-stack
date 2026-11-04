@@ -17,7 +17,7 @@ SONARR_FIXTURES = Path('/tmp/dubs-real-schema-examples.json')
 LIDARR_FIXTURE = Path('/tmp/dubs-lidarr-schema.json')
 STUDIOS = json.loads((REPO / 'studios.json').read_text())
 VETO = 'ОБЯЗАТЕЛЬНО RU — запрет без русского'
-FEED = 'http://panel.test/myshows.feed'
+FEED = 'http://panel.test'
 FIX_OK = SONARR_FIXTURES.exists() and LIDARR_FIXTURE.exists()
 
 BASES = {'sonarr': 'http://sonarr.test', 'radarr': 'http://radarr.test',
@@ -159,10 +159,10 @@ def default_conn(stack, lidarr_extra=None, with_radarr=True):
     return conn
 
 
-def run_bootstrap(stack, conn=None):
+def run_bootstrap(stack, conn=None, feed_url=FEED):
     with patch.object(bs.requests, 'request', side_effect=stack.request):
         return bs.bootstrap(Dep(conn or default_conn(stack)),
-                            copy.deepcopy(STUDIOS), VETO, FEED)
+                            copy.deepcopy(STUDIOS), VETO, feed_url)
 
 
 def field(client_payload, name):
@@ -197,7 +197,7 @@ class BootstrapContractTests(unittest.TestCase):
         stack = FakeStack()
         report = run_bootstrap(stack)
         payload = stack.posted('sonarr', 'importlist')[0]
-        self.assertEqual(field(payload, 'baseUrl'), FEED)
+        self.assertEqual(field(payload, 'baseUrl'), FEED + '/series')
         self.assertEqual(payload['shouldMonitor'], 'future')
         self.assertEqual(payload['monitorNewItems'], 'all')
         self.assertFalse(payload['searchForMissingEpisodes'])
@@ -212,9 +212,52 @@ class BootstrapContractTests(unittest.TestCase):
         managed = next(l for l in stack.objects('sonarr', 'importlist')
                        if l['name'] == 'MyShows watching (Dubs feed)')
         upd = stack.puts('sonarr', 'importlist/%d' % managed['id'])[0]
+        self.assertEqual(field(upd, 'baseUrl'), FEED + '/series')
         self.assertEqual(upd['shouldMonitor'], 'future')
         self.assertEqual(upd['monitorNewItems'], 'all')
         self.assertEqual(upd['rootFolderPath'], '/tv')
+
+    def test_custom_import_url_fetches_real_feed_on_create_and_update(self):
+        # Sonarr CustomImportProxy GETs BaseUrl.TrimEnd('/') directly; it
+        # does not append the /api/v3/series route used by SonarrImport.
+        import tempfile
+        import urllib.error
+        import urllib.request
+        from types import SimpleNamespace
+        import _dubs_env  # noqa: F401
+        import myshows_feed
+        from integration_smoke import feed_server
+
+        with tempfile.TemporaryDirectory(prefix='dubs-list-contract-') as tmp:
+            with patch.object(myshows_feed, 'STATE', Path(tmp)):
+                srv, base = feed_server(SimpleNamespace(feed_state=Path(tmp) / 'feed'),
+                                        '127.0.0.1')
+                self.addCleanup(srv.server_close)
+                self.addCleanup(srv.shutdown)
+                with urllib.request.urlopen(base + '/health', timeout=5) as response:
+                    self.assertIsInstance(json.load(response), dict)
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(base, timeout=5)
+                self.assertEqual(ctx.exception.code, 404)
+
+                stack = FakeStack()
+                handle = stack.handle
+
+                def validate_list(app, method, path, data):
+                    if app == 'sonarr' and method in ('POST', 'PUT') and (
+                            path == 'importlist' or path.startswith('importlist/')):
+                        # Perform the real HTTP request Sonarr uses to validate
+                        # the list; no test-connection bypass or fake root route.
+                        with urllib.request.urlopen(field(data, 'baseUrl').rstrip('/'),
+                                                    timeout=5) as response:
+                            self.assertEqual(json.load(response), [])
+                    return handle(app, method, path, data)
+
+                with patch.object(stack, 'handle', side_effect=validate_list):
+                    report = run_bootstrap(stack, feed_url=base)
+                    report2 = run_bootstrap(stack, feed_url=base + '/')
+                self.assertEqual(report2['import_list'], report['import_list'])
+                self.assertEqual(len(stack.posted('sonarr', 'importlist')), 1)
 
     # 2. Radarr: same 14-studio base family + identical scores --------------
 

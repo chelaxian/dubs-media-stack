@@ -194,7 +194,7 @@ jobs:
   ios:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: iOS simulator tests (minimum iOS 17) + TrollStore IPA
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
