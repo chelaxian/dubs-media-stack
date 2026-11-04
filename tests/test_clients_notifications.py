@@ -181,13 +181,30 @@ class IOSNativeTest(unittest.TestCase):
 
     def test_actual_async_and_background_api_selectors(self):
         self.assertIn("callAsyncJavaScript:[DubsEvents registrationScript]", self.main)
-        self.assertIn("usingQueue:dispatch_get_main_queue() launchHandler:", self.main)
+        self.assertIn("registerForTaskWithIdentifier:EVENTS_TASK_ID usingQueue:dispatch_get_main_queue() launchHandler:", self.main)
+        self.assertNotIn("registerTaskWithIdentifier:", self.main)
         self.assertIn("setTaskCompletedWithSuccess:", self.main)
         self.assertNotIn("usingLaunchHandler:", self.main)
         self.assertIn("DubsRefreshCompletion", self.main)
         ent = plistlib.loads(self.ent.encode())
         self.assertEqual(ent['application-identifier'], '$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)')
         self.assertEqual(ent['keychain-access-groups'], [ent['application-identifier']])
+
+    def test_panel_script_selector_is_declared_before_typed_use(self):
+        interface = self.main.index("@interface PanelController :")
+        declaration = self.main.index("- (void)evaluateJavaScriptString:(NSString *)script;")
+        use = self.main.index("[panel evaluateJavaScriptString:RevokeScript(deviceId)]")
+        self.assertLess(interface, declaration)
+        self.assertLess(declaration, use)
+        self.assertNotIn("[(id)panel evaluateJavaScriptString:", self.main)
+
+    def test_player_completion_captures_origin_and_generation_locally(self):
+        player = self.main.split("- (void)openEpisode:(NSURL *)original{", 1)[1].split("- (BOOL)openPlayerURL:", 1)[0]
+        callback = player.index("completionHandler:")
+        self.assertLess(player.index("NSString *capturedOrigin=OriginString(self.serverURL);"), callback)
+        self.assertLess(player.index("NSUInteger generation=EventsGeneration;"), callback)
+        self.assertIn("generation!=EventsGeneration", player)
+        self.assertIn("capturedOrigin isEqualToString:OriginString(self.serverURL)", player)
 
     def test_plist_and_entitlements(self):
         self.assertIn("<string>1.3.0</string>", self.plist)
@@ -234,11 +251,28 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("ram-size: 4096M", self.wf)
         self.assertIn("connectedDebugAndroidTest", self.wf)
 
-    def test_ios_simulator_and_unsigned_payload(self):
+    def test_ios_simulator_and_verified_trollstore_ipa(self):
         self.assertIn("DUBS_IOS_SIMULATOR_ID", self.wf)
         self.assertIn("int(match[1]) >= 17", self.wf)
         self.assertIn("xcodegen generate", self.wf)
         self.assertIn("CODE_SIGNING_ALLOWED=NO build", self.wf)
+        sign = "codesign --force --sign - --entitlements trollstore-entitlements.plist Payload/Dubs.app"
+        verify = "codesign --verify --strict Payload/Dubs.app"
+        extract = "codesign --display --entitlements :- Payload/Dubs.app > verified-entitlements.plist"
+        self.assertLess(self.wf.index("cp -R build/release/Build/Products/Release-iphoneos/Dubs.app Payload/"), self.wf.index(sign))
+        self.assertLess(self.wf.index(sign), self.wf.index(verify))
+        self.assertLess(self.wf.index(verify), self.wf.index(extract))
+        self.assertIn("assert entitlements == expected", self.wf)
+        self.assertIn("architectures == ['arm64']", self.wf)
+        self.assertIn("info['CFBundleSupportedPlatforms'] == ['iPhoneOS']", self.wf)
+        self.assertIn("info['MinimumOSVersion'] == '17.0'", self.wf)
+        self.assertIn("info['CFBundleShortVersionString'] == '1.3.0'", self.wf)
+        self.assertIn("info['CFBundleVersion'] == '13'", self.wf)
+        self.assertIn("zip -qry Dubs-1.3.0-TrollStore.ipa Payload", self.wf)
+        self.assertIn("shasum -a 256 Dubs-1.3.0-TrollStore.ipa > Dubs-1.3.0-TrollStore.ipa.sha256.txt", self.wf)
+        self.assertNotIn("dubs-ios-payload-unsigned.zip", self.wf)
+        self.assertNotIn("parent signs", self.wf)
+
 
     def test_plain_jvm_policy_tests_run_in_ci(self):
         self.assertIn("NotificationPolicyTest", self.wf)

@@ -30,10 +30,10 @@ class NotificationAPITests(unittest.TestCase):
   import requests
   client=requests.Session();client.trust_env=False
   headers={'Authorization':'Bearer '+device['token']}
-  n.emit('new_episode','title http://192.168.1.1/secret','/mnt/private/file',77,4,'new')
+  n.emit('new_episode','title http://192.0.2.1/secret','/mnt/private/file',77,4,'new')
   r=client.get(self.url+'/api/notifications/events?after=1&limit=1',headers=headers)
   self.assertEqual(r.status_code,200);self.assertEqual(len(r.json()['events']),1)
-  self.assertNotIn('192.168',r.text);self.assertNotIn('/mnt',r.text)
+  self.assertNotIn('192.0.2',r.text);self.assertNotIn('/mnt',r.text)
   for route in ('/api/session','/api/episodes','/api/notifications/settings','/api/notifications/devices','/api/notifications/history'):
    self.assertEqual(client.get(self.url+route,headers=headers).status_code,401,route)
   self.assertEqual(client.post(self.url+'/api/action',headers=dict(headers,Origin=self.url),data={'csrf':'x','op':'refresh','episode':'0','selection':''}).status_code,403)

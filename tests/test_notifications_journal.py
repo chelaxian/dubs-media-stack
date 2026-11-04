@@ -54,11 +54,11 @@ class JournalTests(unittest.TestCase):
  def test_payloads_sanitized_and_bounded(self):
   with self.fresh():
    n.emit('new_episode','Заголовок\nс\tпереводами '+'x'*400,
-    'Смотрите на http://192.168.1.5:8096 или magnet:?xt=1 путь /mnt/shows/secret path \x01\x02',7,3,'s1')
+    'Смотрите на http://192.0.2.5:8096 или magnet:?xt=1 путь /mnt/shows/secret path \x01\x02',7,3,'s1')
    row=n.events_after(0,1)[0]
    self.assertLessEqual(len(row['title']),n.TITLE_MAX)
    self.assertLessEqual(len(row['message']),n.MESSAGE_MAX)
-   for secret in ('http','magnet','192.168','/mnt','shows'):
+   for secret in ('http','magnet','192.0.2','/mnt','shows'):
     self.assertNotIn(secret,row['message'])
    for ch in row['title']+row['message']:
     self.assertGreaterEqual(ord(ch),32)   # control characters never survive

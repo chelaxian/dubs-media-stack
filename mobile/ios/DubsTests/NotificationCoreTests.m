@@ -20,7 +20,8 @@
  DubsRefreshCompletion *gate=[DubsRefreshCompletion new];
  __block NSUInteger completions=0,cancellations=0;
  gate.done=^(BOOL ok){XCTAssertFalse(ok);++completions;};
- gate.cancel=^{++cancellations;[gate finish:YES];};
+ __weak DubsRefreshCompletion *weakGate=gate;
+ gate.cancel=^{++cancellations;[weakGate finish:YES];};
  [gate expire];[gate finish:YES];[gate expire];
  XCTAssertEqual(completions,1u);XCTAssertEqual(cancellations,1u);
 }

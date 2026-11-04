@@ -13,9 +13,10 @@
   **`app.dubs.panel.tv`** (v1.4.0-tv, versionCode 7, `mobile/android/tv`;
   режим навигации с пульта — `mobile/server/tv.css` подключается панелью
   как `dubs-tv`).
-- **iOS 17+** (deployment target 17.0, bundle **`app.dubs.panel`**, v1.2.0):
+- **iOS 17+** (deployment target 17.0, bundle **`app.dubs.panel`**, v1.3.0):
   минимальная обёртка (`mobile/ios`, проект XcodeGen — `project.yml`;
-  подписывание в проекте отключено — `CODE_SIGNING_ALLOWED=NO` — установка
+  компиляция использует `CODE_SIGNING_ALLOWED=NO`, затем CI подписывает
+  приложение ad-hoc для установки
   в контексте TrollStore, не App Store).
 
 Обёртки — это тонкие WebView-шеллы: открывают **ваш** HTTPS-адрес панели,
@@ -156,13 +157,21 @@ Workflow `.github/workflows/mobile-release.yml` запускается вруч�
 `DUBS_KEYSTORE_B64`, `DUBS_SIGNING_PASSWORD` и необязательный `DUBS_KEY_ALIAS`.
 Ключи не входят в репозиторий. Без секретов выдаются отладочные APK.
 
-iOS собирается для устройства без подписи и для симулятора. Для TrollStore
-оператор подписывает устройство с entitlements конкретного bundle ID:
-`application-identifier` и единственная `keychain-access-groups` должны
-соответствовать приложению. Шаблон `Dubs.entitlements` использует значения
-сборки; не подписывайте буквальные строки с `$()` и не добавляйте wildcard
-доступа к Keychain. Артефакт workflow содержит разрешённый для TrollStore
-plist с конкретным идентификатором. Удалённой доставки и её entitlement нет.
+iOS проходит simulator unit/UI tests, затем компилируется для iPhoneOS с
+`CODE_SIGNING_ALLOWED=NO`. На том же macOS runner приложение копируется в
+`Payload/Dubs.app`, подписывается `codesign --sign -` и проверяется
+`codesign --verify --strict`. Apple Developer, сертификат и секрет подписи
+для этого ad-hoc пакета не нужны; установка предназначена для TrollStore.
+
+CI сверяет фактический Info.plist и Mach-O: только arm64/iPhoneOS,
+MinimumOSVersion 17.0, версия 1.3.0 и build 13. Entitlements извлекаются из
+проверенной подписи и должны содержать ровно `application-identifier` с
+фактическим bundle ID и единственную равную ему `keychain-access-groups`.
+Широких групп, team/debug/get-task-allow и push entitlements нет.
+
+В guarded `ios-artifacts` загружаются готовый `Dubs-1.3.0-TrollStore.ipa`,
+`Dubs-1.3.0-TrollStore.ipa.sha256.txt`, журнал тестов и оба entitlement plist.
+Дополнительная подпись на Linux не требуется. Удалённой доставки нет.
 
 Проверки исходного текста и простой `javac` не заменяют сборку APK, lint,
 эмулятор и Xcode. Workflow запускает Android instrumentation на API 28/36

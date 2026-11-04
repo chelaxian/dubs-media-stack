@@ -193,7 +193,7 @@ jobs:
 
   ios:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
-    name: iOS simulator tests (minimum iOS 17) + unsigned payload
+    name: iOS simulator tests (minimum iOS 17) + TrollStore IPA
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -243,29 +243,59 @@ jobs:
             -derivedDataPath build/test CODE_SIGNING_ALLOWED=NO test \
             | tee xcodebuild-test.log
 
-      - name: Build unsigned Release payload (parent signs for TrollStore)
+      - name: Build, ad-hoc sign and verify TrollStore IPA on macOS
         working-directory: mobile/ios
         run: |
+          set -euo pipefail
           xcodebuild -project Dubs.xcodeproj -scheme Dubs \
-            -configuration Release -sdk iphoneos \
+            -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
             -derivedDataPath build/release CODE_SIGNING_ALLOWED=NO build
-          python3 - <<'PYENT'
-          import plistlib
-          from pathlib import Path
-          info = plistlib.loads(Path('build/release/Build/Products/Release-iphoneos/Dubs.app/Info.plist').read_bytes())
-          bundle = info['CFBundleIdentifier']
-          Path('trollstore-entitlements.plist').write_bytes(plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
-          PYENT
           mkdir Payload
           cp -R build/release/Build/Products/Release-iphoneos/Dubs.app Payload/
-          zip -qry dubs-ios-payload-unsigned.zip Payload
+          python3 - <<'PYENT'
+          import plistlib, re, subprocess
+          from pathlib import Path
+          app = Path('Payload/Dubs.app')
+          info = plistlib.loads((app / 'Info.plist').read_bytes())
+          bundle = info['CFBundleIdentifier']
+          assert isinstance(bundle, str) and re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', bundle), 'Invalid built bundle identifier'
+          assert info['CFBundleShortVersionString'] == '1.3.0', 'Unexpected marketing version'
+          assert info['CFBundleVersion'] == '13', 'Unexpected build number'
+          assert info['MinimumOSVersion'] == '17.0', 'Unexpected minimum OS'
+          assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Not an iPhoneOS app'
+          executable = info['CFBundleExecutable']
+          assert isinstance(executable, str) and executable and Path(executable).name == executable, 'Invalid executable name'
+          binary = app / executable
+          architectures = subprocess.check_output(['xcrun', 'lipo', '-archs', str(binary)], text=True).split()
+          assert architectures == ['arm64'], 'Expected device arm64 only'
+          build = subprocess.check_output(['xcrun', 'vtool', '-show-build', str(binary)], text=True)
+          assert re.search(r'^\s*platform\s+IOS\s*$', build, re.M | re.I), 'Mach-O platform must be iPhoneOS'
+          assert re.search(r'^\s*minos\s+17\.0(?:\.0)?\s*$', build, re.M), 'Mach-O minimum OS must be 17.0'
+          Path('trollstore-entitlements.plist').write_bytes(plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
+          PYENT
+          codesign --force --sign - --entitlements trollstore-entitlements.plist Payload/Dubs.app
+          codesign --verify --strict Payload/Dubs.app
+          codesign --display --entitlements :- Payload/Dubs.app > verified-entitlements.plist
+          python3 - <<'PYVERIFY'
+          import plistlib
+          from pathlib import Path
+          info = plistlib.loads(Path('Payload/Dubs.app/Info.plist').read_bytes())
+          bundle = info['CFBundleIdentifier']
+          entitlements = plistlib.loads(Path('verified-entitlements.plist').read_bytes())
+          expected = {'application-identifier': bundle, 'keychain-access-groups': [bundle]}
+          assert entitlements == expected, 'Signed entitlements must be exactly app-only identity and Keychain group; no team, wildcard, push, get-task-allow or debug entitlements'
+          PYVERIFY
+          zip -qry Dubs-1.3.0-TrollStore.ipa Payload
+          shasum -a 256 Dubs-1.3.0-TrollStore.ipa > Dubs-1.3.0-TrollStore.ipa.sha256.txt
 
       - name: Upload iOS artifacts and logs
         uses: actions/upload-artifact@v4
         with:
           name: ios-artifacts
           path: |
-            mobile/ios/dubs-ios-payload-unsigned.zip
+            mobile/ios/Dubs-1.3.0-TrollStore.ipa
+            mobile/ios/Dubs-1.3.0-TrollStore.ipa.sha256.txt
             mobile/ios/xcodebuild-test.log
             mobile/ios/trollstore-entitlements.plist
+            mobile/ios/verified-entitlements.plist
           if-no-files-found: error

@@ -4,7 +4,13 @@
 #import <BackgroundTasks/BackgroundTasks.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
-@class PanelController;
+@interface PanelController : UIViewController <WKNavigationDelegate,WKUIDelegate,UNUserNotificationCenterDelegate>
+@property(nonatomic,strong) WKWebView *web;
+@property(nonatomic,strong) NSURL *serverURL;
+@property(nonatomic,assign) BOOL switchingServer;
+- (void)evaluateJavaScriptString:(NSString *)script;
+- (void)applyRoute:(NSString *)hash;
+@end
 #define EVENTS_TASK_ID @"dubs.events.refresh"
 #define EVENTS_SERVICE @"dubs.events"
 #define EVENTS_ACCOUNT @"token"
@@ -139,7 +145,7 @@ static DubsPollSession *ActivePoll;
 @implementation DubsEvents
 + (NSString *)registrationScript{return RegistrationScript(@"ios");}
 + (void)registerBackgroundHandler{
- [[BGTaskScheduler sharedScheduler]registerTaskWithIdentifier:EVENTS_TASK_ID usingQueue:dispatch_get_main_queue() launchHandler:^(BGTask *task){
+ [[BGTaskScheduler sharedScheduler]registerForTaskWithIdentifier:EVENTS_TASK_ID usingQueue:dispatch_get_main_queue() launchHandler:^(BGTask *task){
   if(![task isKindOfClass:BGAppRefreshTask.class]){[task setTaskCompletedWithSuccess:NO];return;}
   DubsRefreshCompletion *gate=[DubsRefreshCompletion new];
   gate.done=^(BOOL ok){task.expirationHandler=nil;[task setTaskCompletedWithSuccess:ok];[self scheduleRefresh];};
@@ -260,16 +266,10 @@ static BOOL pollLocked;
  [UNUserNotificationCenter.currentNotificationCenter removeAllPendingNotificationRequests];
  [UNUserNotificationCenter.currentNotificationCenter removeAllDeliveredNotifications];
  [self cancelRefresh];
- if(revoke&&deviceId.length&&panel)[(id)panel evaluateJavaScriptString:RevokeScript(deviceId)];
+ if(revoke&&deviceId.length&&panel)[panel evaluateJavaScriptString:RevokeScript(deviceId)];
 }
 @end
-@interface PanelController : UIViewController <WKNavigationDelegate,WKUIDelegate,UNUserNotificationCenterDelegate>
-@property(nonatomic,strong) WKWebView *web;
-@property(nonatomic,strong) NSURL *serverURL;
-@property(nonatomic,assign) BOOL switchingServer;
-- (void)evaluateJavaScriptString:(NSString *)script;
-- (void)applyRoute:(NSString *)hash;
-@end
+
 static __weak PanelController *activePanel;
 @implementation PanelController
 - (UIStatusBarStyle)preferredStatusBarStyle{return UIStatusBarStyleLightContent;}
@@ -305,7 +305,6 @@ static __weak PanelController *activePanel;
 }
 - (void)showEventsSettings:(UNNotificationSettings *)permission{
  if(self.presentedViewController||!self.home)return;
- NSDictionary *state=EventsDefaults();
  NSMutableString *status=[NSMutableString string];
  BOOL permitted=permission.authorizationStatus==UNAuthorizationStatusAuthorized||permission.authorizationStatus==UNAuthorizationStatusProvisional;
  if(!permitted)[status appendString:@"Разрешение iOS не выдано. Откройте системные настройки. "];
@@ -313,7 +312,7 @@ static __weak PanelController *activePanel;
  else [status appendString:@"Уведомления на этом устройстве выключены."];
  UIAlertController *a=[UIAlertController alertControllerWithTitle:@"События и уведомления" message:status preferredStyle:UIAlertControllerStyleAlert];
  BOOL on=[DubsEvents enabled]&&permitted;
- UIAlertAction *enableAction=[UIAlertAction actionWithTitle:on?"Проверить сейчас":"Включить уведомления на устройстве" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){if(on)[[DubsEvents class]pollWithCompletion:nil];else[self requestAuthorizationAndRegister];}];
+ UIAlertAction *enableAction=[UIAlertAction actionWithTitle:(on ? @"Проверить сейчас" : @"Включить уведомления на устройстве") style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){if(on)[[DubsEvents class]pollWithCompletion:nil];else[self requestAuthorizationAndRegister];}];
  [a addAction:enableAction];
  [a addAction:[UIAlertAction actionWithTitle:@"Типы событий (аккаунт)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%@#settings?section=events",OriginString(self.serverURL)]]]];}]];
  [a addAction:[UIAlertAction actionWithTitle:@"Системные настройки" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[[UIApplication sharedApplication]openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]options:@{} completionHandler:nil];}]];
@@ -394,6 +393,8 @@ static __weak PanelController *activePanel;
  NSURLComponents *parts=[NSURLComponents componentsWithString:[@"https://local/?" stringByAppendingString:[fragment substringFromIndex:q.location+1]]];NSString *item=nil,*server=nil;
  for(NSURLQueryItem *part in parts.queryItems){if([part.name isEqual:@"id"])item=part.value;if([part.name isEqual:@"serverId"])server=part.value;}
  if(![self validID:item]||![self validID:server])return;
+ NSString *capturedOrigin=OriginString(self.serverURL);
+ NSUInteger generation=EventsGeneration;
  __weak PanelController *weakSelf=self;
  [self.web callAsyncJavaScript:@"const r=await fetch('/api/session',{credentials:'same-origin'});if(!r.ok)return '';return (await r.json()).userId||'';" arguments:@{} inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result,NSError *error){
   PanelController *self=weakSelf;if(!self||generation!=EventsGeneration||self.switchingServer||![capturedOrigin isEqualToString:OriginString(self.serverURL)]||![self panel:self.web.URL])return;
@@ -423,7 +424,10 @@ static __weak PanelController *activePanel;
  [self loadViewIfNeeded];
  NSDictionary *info=response.notification.request.content.userInfo;
  if(!ValidInstance(info[@"instanceId"])||![info[@"instanceId"]isEqual:EventsDefaults()[@"instanceId"]]){completionHandler();return;}
- NSString *hash=EventsRoute([info[@"fp"]isKindOfClass:NSString.class]?info[@"fp"]:@"",Fingerprint(self.serverURL),[info[@"episodeId"]longLongValue],[info[@"section"]isKindOfClass:NSString.class]?info[@"section"]:nil];
+ NSString *fingerprint=[info[@"fp"]isKindOfClass:NSString.class]?info[@"fp"]:@"";
+ NSInteger episode=ValidCounter(info[@"episodeId"])?[info[@"episodeId"]longLongValue]:0;
+ NSString *section=[info[@"section"]isKindOfClass:NSString.class]?info[@"section"]:nil;
+ NSString *hash=EventsRoute(fingerprint,Fingerprint(self.serverURL),episode,section);
  if(hash)[self applyRoute:hash];
  completionHandler();
 }
