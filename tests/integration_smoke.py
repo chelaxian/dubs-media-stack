@@ -443,19 +443,53 @@ if SMOKE:
                 self.assertEqual(r['class'], 'ready', r)
                 self.assertTrue(r['managed'], 'dubs-* container must be flagged managed')
 
-    def smoke_main():
-        if not SMOKE:
-            print('integration_smoke is flag-gated: run with '
-                  'DUBS_SMOKE=1 on a Docker host (see module docstring)')
-            return 2
-        unittest.main(module=None, argv=[sys.argv[0], '-v'])
-        return 0
-
-    if __name__ == '__main__':
-        sys.exit(smoke_main())
 
 else:
     if __name__ == '__main__':
         print('integration_smoke is flag-gated: run with '
               'DUBS_SMOKE=1 on a Docker host (see module docstring)')
         sys.exit(2)
+
+def expected_names(module):
+    cls = getattr(module, 'IntegrationSmoke', None)
+    return sorted(n for n in dir(cls)
+                  if n.startswith('test') and callable(getattr(cls, n))) if cls else []
+
+def suite_for(module):
+    return unittest.TestLoader().loadTestsFromModule(module)
+
+def _cases(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _cases(item)
+        else:
+            yield item
+
+def smoke_main(module=None):
+    """Run the REAL smoke; refuse fake success when nothing is selected.
+
+    unittest.main(module=None, argv=[...]) used to load ZERO tests and
+    exit 0 ("Ran 0 tests" green CI); the runner below fails closed.
+    """
+    target = module if module is not None else sys.modules['__main__']
+    if not SMOKE:
+        print('integration_smoke is flag-gated: run with '
+              'DUBS_SMOKE=1 on a Docker host (see module docstring)')
+        return 2
+    expected = expected_names(target)
+    suite = suite_for(target)
+    selected = sorted({case.id().rsplit('.', 1)[-1] for case in _cases(suite)})
+    if len(expected) != 6 or suite.countTestCases() != len(expected) or selected != expected:
+        print('smoke runner refuses to start: selected %d of %d expected '
+              'test methods (%s)' % (len(selected), len(expected),
+                                     ', '.join(expected) or 'none'))
+        return 2
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.testsRun != len(expected):
+        print('smoke runner refuses success: no tests ran')
+        return 2
+    return 0 if result.wasSuccessful() else 1
+
+
+if __name__ == "__main__" and SMOKE:
+    sys.exit(smoke_main())
