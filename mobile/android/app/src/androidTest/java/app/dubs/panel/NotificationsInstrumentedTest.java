@@ -119,17 +119,72 @@ public class NotificationsInstrumentedTest {
    .put("settings",new org.json.JSONObject().put("enabled",true).put("showTitles",false).put("types",new org.json.JSONArray().put("new_episode")))
    .put("events",new org.json.JSONArray().put(new org.json.JSONObject().put("id",id).put("type","new_episode").put("title","Private title").put("message","Private message").put("episodeId",9999999999L)));
  }
- private void shell(String command) throws Exception {
-  android.os.ParcelFileDescriptor result=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(command);
-  try(java.io.FileInputStream output=new java.io.FileInputStream(result.getFileDescriptor())){while(output.read()!=-1){}}
-  result.close();
+ private final StringBuilder permissionShellTrace=new StringBuilder();
+ private String shell(String command) throws Exception {
+  // UiAutomation returns a pipe, not a process exit code. Run a shell wrapper
+  // that merges stderr and appends the actual command status to that pipe.
+  String marker="DUBS_SHELL_EXIT=";
+  // Send the script through stdin: executeShellCommand does not promise shell
+  // parsing of quotes/redirections in its command argument. This helper is
+  // called only on API 33+, where executeShellCommandRw (API 31) is public.
+  android.os.ParcelFileDescriptor[] pipes=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommandRw("sh");
+  String script="exec 2>&1\n"+command+"\nstatus=$?\nprintf '\\n"+marker+"%s\\n' \"$status\"\n";
+  String text;
+  try(java.io.InputStream output=new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipes[0]);
+      java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream()){
+   try(java.io.OutputStream input=new android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipes[1])){
+    input.write(script.getBytes(StandardCharsets.UTF_8));
+   }
+   byte[] buffer=new byte[4096];int n;
+   while((n=output.read(buffer))!=-1)bytes.write(buffer,0,n);
+   text=new String(bytes.toByteArray(),StandardCharsets.UTF_8);
+  }
+  permissionShellTrace.append(command).append(" => ").append(text).append('\n');
+  int end=text.lastIndexOf(marker);
+  assertTrue("missing shell exit status: "+permissionShellTrace,end>=0);
+  assertEquals("shell command failed: "+permissionShellTrace,"0",text.substring(end+marker.length()).trim());
+  return text.substring(0,end).trim();
+ }
+ private int notificationOpMode(boolean raw){
+  android.app.AppOpsManager ops=context.getSystemService(android.app.AppOpsManager.class);
+  // Observe the operation set by the shell independently of permissionToOp:
+  // a missing permission mapping must remain visible, not prevent fixture proof.
+  String op="android:post_notification";
+  if(ops==null)return -1;
+  return raw&&android.os.Build.VERSION.SDK_INT>=29
+   ?ops.unsafeCheckOpRawNoThrow(op,android.os.Process.myUid(),context.getPackageName())
+   :ops.checkOpNoThrow(op,android.os.Process.myUid(),context.getPackageName());
+ }
+ private String permissionDiagnostics() throws Exception {
+  android.app.NotificationManager manager=context.getSystemService(android.app.NotificationManager.class);
+  android.app.NotificationChannel channel=manager.getNotificationChannel(NotificationSync.CHANNEL_ID);
+  return "sdk="+android.os.Build.VERSION.SDK_INT+" package="+context.getPackageName()
+   +" ownUid="+android.os.Process.myUid()+" contextUid="+context.getApplicationInfo().uid
+   +" packageUid="+context.getPackageManager().getApplicationInfo(context.getPackageName(),0).uid
+   +" permission="+context.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+   +" permissionToOp="+android.app.AppOpsManager.permissionToOp("android.permission.POST_NOTIFICATIONS")
+   +" normalMode="+notificationOpMode(false)+" rawMode="+notificationOpMode(true)
+   +" NMS.areNotificationsEnabled="+manager.areNotificationsEnabled()
+   +" channelImportance="+(channel==null?"absent":channel.getImportance())
+   +" activeNotifications="+manager.getActiveNotifications().length
+   +" productAllowed="+NotificationSync.notificationsAllowed(context)
+   +" shellPackageOp="+shell("cmd appops get "+context.getPackageName()+" POST_NOTIFICATION")
+   +" shellUidOp="+shell("cmd appops get --uid "+context.getPackageName()+" POST_NOTIFICATION")
+   +" shellTrace="+permissionShellTrace;
  }
  private void permission(boolean allowed) throws Exception {
   if(android.os.Build.VERSION.SDK_INT>=33){
-   shell("pm grant "+context.getPackageName()+" android.permission.POST_NOTIFICATIONS");
+   assertEquals("pm grant emitted unexpected output: "+permissionShellTrace,"",shell("pm grant "+context.getPackageName()+" android.permission.POST_NOTIFICATIONS"));
    // AppOps is the OS app-level notification switch; unlike revoking a
    // runtime permission from the test process it does not kill the runner.
-   shell("cmd appops set "+context.getPackageName()+" POST_NOTIFICATION "+(allowed?"allow":"ignore"));
+   assertEquals("appops set emitted unexpected output: "+permissionShellTrace,"",shell("cmd appops set "+context.getPackageName()+" POST_NOTIFICATION "+(allowed?"allow":"ignore")));
+   int expected=allowed?android.app.AppOpsManager.MODE_ALLOWED:android.app.AppOpsManager.MODE_IGNORED;
+   long started=android.os.SystemClock.elapsedRealtime();
+   permissionShellTrace.append("rawModeImmediatelyAfterSet=").append(notificationOpMode(true)).append('\n');
+   long deadline=started+5000;
+   while(notificationOpMode(true)!=expected&&android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(25);
+   permissionShellTrace.append("appOpsWaitMs=").append(android.os.SystemClock.elapsedRealtime()-started).append('\n');
+   assertEquals("OS AppOps fixture did not converge: "+permissionDiagnostics(),expected,notificationOpMode(true));
   }
  }
  @Test public void realDeliveryDedupePrivacyDisableAndRealmReset() throws Exception {
@@ -160,13 +215,29 @@ public class NotificationsInstrumentedTest {
  }
  @Test public void systemDeniedIsNotReportedActiveAndCursorStillAdvances() throws Exception {
   if(android.os.Build.VERSION.SDK_INT<33)return;
-  permission(false);
-  EventStore baseline=registration(1);
-  assertFalse(NotificationSync.notificationsAllowed(context));
-  NotificationSync.consume(context,baseline,page(2,baseline.instanceId()));
-  assertEquals(2,EventStore.load(context).cursor());
-  assertEquals(0,context.getSystemService(android.app.NotificationManager.class).getActiveNotifications().length);
-  permission(true);
+  Throwable denialFailure=null;
+  try{
+   permission(false);
+   EventStore baseline=registration(1);
+   long started=android.os.SystemClock.elapsedRealtime();
+   permissionShellTrace.append("productAllowedImmediatelyAfterFixture=").append(NotificationSync.notificationsAllowed(context)).append('\n');
+   long deadline=started+5000;
+   while(NotificationSync.notificationsAllowed(context)&&android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(25);
+   permissionShellTrace.append("productGateWaitMs=").append(android.os.SystemClock.elapsedRealtime()-started).append('\n');
+   String diagnostics=permissionDiagnostics();
+   android.util.Log.i("DubsDenialFixture",diagnostics);
+   assertFalse("product reports active after OS denial: "+diagnostics,NotificationSync.notificationsAllowed(context));
+   NotificationSync.consume(context,baseline,page(2,baseline.instanceId()));
+   assertEquals("denied delivery must advance cursor: "+diagnostics,2,EventStore.load(context).cursor());
+   assertEquals("denied delivery must not post: "+permissionDiagnostics(),0,context.getSystemService(android.app.NotificationManager.class).getActiveNotifications().length);
+  }catch(Exception|AssertionError failure){
+   denialFailure=failure;
+   throw failure;
+  }finally{
+   try{permission(true);}catch(Exception|AssertionError restoreFailure){
+    if(denialFailure!=null)denialFailure.addSuppressed(restoreFailure);else throw restoreFailure;
+   }
+  }
  }
 
  @Test public void realWebViewRegistrationMailboxAwaitsAndClears() throws Exception {

@@ -144,6 +144,17 @@ jobs:
           working-directory: mobile/android
           script: gradle :app:connectedDebugAndroidTest
 
+      - name: Upload private Android instrumentation reports
+        if: ${{ always() && github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports-api-${{ matrix.api-level }}-${{ github.run_attempt }}
+          path: |
+            mobile/android/app/build/outputs/androidTest-results/connected/**/*.xml
+            mobile/android/app/build/reports/androidTests/connected/**
+          retention-days: 3
+          if-no-files-found: warn
+
   android-release:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: Android signed release artifacts
@@ -236,27 +247,49 @@ jobs:
           python3 - <<'PYSIM'
           import json, os, re
           from pathlib import Path
+          def device_priority(name):
+              if re.search(r'\bSE\b', name):
+                  return 0
+              if not re.search(r'\b(Pro|Max|Plus)\b', name):
+                  return 1
+              if not re.search(r'\b(Max|Plus)\b', name):
+                  return 2
+              return 3
+
           choices = []
           for runtime, devices in json.loads(Path('/tmp/dubs-simulators.json').read_text())['devices'].items():
-              match = re.search(r'iOS-(\d+)-(\d+)', runtime)
+              match = re.fullmatch(r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-(\d+))?', runtime)
               if match and int(match[1]) >= 17:
                   for device in devices:
                       if device['name'].startswith('iPhone') and device.get('isAvailable'):
-                          choices.append(((int(match[1]), int(match[2])), device['udid'], runtime, device['name']))
+                          version = (int(match[1]), int(match[2]), int(match[3] or 0))
+                          choices.append((version, device_priority(device['name']), device['name'], device['udid'], runtime, device['state']))
           if not choices:
-              raise SystemExit('No available iPhone simulator with iOS >=17; install a simulator runtime')
-          _, identifier, runtime, name = max(choices)
-          print('Selected simulator:', runtime, name)
+              raise SystemExit('No available installed iPhone simulator with iOS >=17')
+          version, _, name, identifier, runtime, state = min(choices)
+          print('Selected simulator: iOS', '.'.join(map(str, version)), runtime, name, identifier, 'state=' + state)
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write('DUBS_IOS_SIMULATOR_ID=' + identifier + '\n')
+              output.write('DUBS_IOS_SIMULATOR_STATE=' + state + '\n')
           PYSIM
 
+      - name: Preboot selected iPhone simulator
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          if [[ "$DUBS_IOS_SIMULATOR_STATE" != "Booted" ]]; then
+            xcrun simctl boot "$DUBS_IOS_SIMULATOR_ID"
+          fi
+          xcrun simctl bootstatus "$DUBS_IOS_SIMULATOR_ID" -b
+
       - name: Run UI and notification state tests on selected simulator
+        timeout-minutes: 15
         working-directory: mobile/ios
         run: |
           set -o pipefail
           xcodebuild -project Dubs.xcodeproj -scheme Dubs \
             -destination "platform=iOS Simulator,id=$DUBS_IOS_SIMULATOR_ID" \
+            -parallel-testing-enabled NO \
             -derivedDataPath build/test CODE_SIGNING_ALLOWED=NO test \
             | tee xcodebuild-test.log
 
