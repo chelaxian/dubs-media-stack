@@ -35,6 +35,7 @@ CONFIG_EXAMPLE = {
     'timezone': 'Europe/Moscow',      # schedules the daily 18:00 upgrade pass
     'owner_label': '',
     'public_url': '',                 # https URL the panel is published under
+    'jellyfin_api_url': '',           # non-secret login API base; empty uses jellyfin.json connection
     'jellyfin_url': '',               # https URL of the public Jellyfin
     'cleanup_enable': False,          # watched cleanup is opt-in; stays off on fresh installs
     'daily_upgrade_hour': 18,

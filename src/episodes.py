@@ -6,6 +6,7 @@ import sys
 import jellyfin_links
 import runtime as rt
 import upgrades
+import notifications
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
 VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ssa','.sub','.vtt','.mka','.ac3','.aac'}
 class UserError(Exception):pass
@@ -46,10 +47,24 @@ def refresh(m,wait=False):
   # Re-verify token owner before using authenticated endpoints.
   m.verify_token(m.load('myshows-auth.json',{}).get('token'))
   watching={x['myshowsId']:x for x in m.watching()}
-  try:
-   jf_links=jellyfin_links.get_links(m);atomic(m.WORKER_STATE/'jellyfin-links.json',jf_links)
-  except Exception as exc:
-   logging.warning('Jellyfin link lookup: %s',type(exc).__name__);jf_links=read(m.WORKER_STATE/'jellyfin-links.json',{})
+  # get_library (when the media module provides it) is the single
+  # whole-library fetch and already carries the exact episode URLs, so
+  # get_links must not run a second full scan. The old flat links cache is
+  # still maintained for the players flow; a failed lookup degrades to the
+  # last cached snapshot and never blocks the refresh.
+  metadata_started=time.time();jf_links={};library={}
+  if hasattr(jellyfin_links,'get_library'):
+   try:
+    for key,entry in (jellyfin_links.get_library(m) or {}).items():
+     if not isinstance(entry,dict):continue
+     if entry.get('jellyfinUrl'):jf_links[key]=entry['jellyfinUrl']
+     library[key]=entry.get('localMedia')
+   except Exception as exc:logging.warning('Jellyfin library metadata: %s',type(exc).__name__)
+  else:
+   try:jf_links=jellyfin_links.get_links(m)
+   except Exception as exc:logging.warning('Jellyfin link lookup: %s',type(exc).__name__)
+  if not jf_links:jf_links=read(m.WORKER_STATE/'jellyfin-links.json',{})
+  if jf_links:atomic(m.WORKER_STATE/'jellyfin-links.json',jf_links)
   unwatched=v3(m,'lists.EpisodesUnwatched',{}) or []
   today=datetime.date.today();month=today.replace(day=1);days=[]
   for offset in range(6):
@@ -73,7 +88,7 @@ def refresh(m,wait=False):
     stamp=utcdate(e.get('airDate'));future=stamp is not None and stamp>time.time()
     if view=='upcoming' and not future:continue
     jf_url=jf_links.get(str(entry['series']['tvdbId'])+':'+str(season)+':'+str(number))
-    item={'jellyfinUrl':jf_url,'id':e['id'],'showId':show['id'],'seriesId':sid,'seriesTitle':entry['title'],'title':e.get('title') or 'Без названия','season':season,'number':number,'airDate':e.get('airDate'),'calendarDate':day or (e.get('airDate') or '')[:10],'rating':e.get('rating'),'comments':e.get('commentsCount'),'runtime':e.get('runtime'),'future':future,'sonarrId':matched['id'] if matched else None,'hasFile':bool(jf_url or matched and matched.get('hasFile'))}
+    item={'jellyfinUrl':jf_url,'localMedia':library.get(str(entry['series']['tvdbId'])+':'+str(season)+':'+str(number)),'id':e['id'],'showId':show['id'],'seriesId':sid,'seriesTitle':entry['title'],'title':e.get('title') or 'Без названия','season':season,'number':number,'airDate':e.get('airDate'),'calendarDate':day or (e.get('airDate') or '')[:10],'rating':e.get('rating'),'comments':e.get('commentsCount'),'runtime':e.get('runtime'),'future':future,'sonarrId':matched['id'] if matched else None,'hasFile':bool(jf_url or matched and matched.get('hasFile'))}
     if view=='released' and future:continue
     eps.append(item);byid[str(e['id'])]=item
    if eps:
@@ -81,8 +96,12 @@ def refresh(m,wait=False):
   for group in unwatched:convert(group,'released')
   for day in calendar.get('days',[]):
    for group in day.get('shows',[]):convert(group,'upcoming',day.get('date'))
-  result={'updated':time.time(),'released':released,'upcoming':upcoming,'episodes':byid,'source':'MyShows lists.EpisodesUnwatched / entity.Calendar','error':None}
+  result={'updated':time.time(),'metadataUpdated':metadata_started,'released':released,'upcoming':upcoming,'episodes':byid,'source':'MyShows lists.EpisodesUnwatched / entity.Calendar','error':None}
   atomic(m.WORKER_STATE/'myshows-episodes.json',result)
+  # Journal newly aired episodes only after the snapshot itself succeeded;
+  # the pass owns the per-show baseline (first sync stays silent) and never
+  # raises into the media refresh.
+  notifications.new_episode_pass(m,[x for group in released+upcoming for x in group['episodes']])
  except Exception as exc:
   logging.warning('Episode snapshot failed: %s',type(exc).__name__);old=read(m.WORKER_STATE/'myshows-episodes.json',{});old['error']='Не удалось обновить MyShows. Показаны последние полученные данные';atomic(m.WORKER_STATE/'myshows-episodes.json',old)
  finally:SYNC_LOCK.release()
@@ -101,6 +120,14 @@ def snapshot(m):
   status=result(m,path.stem)
   actions[eid]={'job':path.stem,'created':req.get('created',0),**status}
  data['actions']=actions
+ # Serve-time honesty: after a confirmed import/replacement the previous
+ # localMedia facts are hidden until a fresh refresh re-verifies them; the
+ # invalidation entries expire, so a missed refresh self-heals.
+ stale=notifications.stale_local_media(data.get('metadataUpdated',0))
+ if stale:
+  for group in data.get('released',[])+data.get('upcoming',[]):
+   for item in group.get('episodes',[]):
+    if 'sonarr:%s:%s:%s'%(item.get('seriesId'),item.get('season'),item.get('number')) in stale:item['localMedia']=None
  return data
 
 def episode(m,eid):
@@ -108,6 +135,7 @@ def episode(m,eid):
  if not e:raise UserError('Эпизод отсутствует в актуальном списке MyShows; обновите вкладку')
  if not any(x['myshowsId']==e['showId'] and x['series']['id']==e['seriesId'] for x in m.watching()):raise UserError('Сериал больше не находится в списке «смотрю»')
  e['future']=bool(utcdate(e.get('airDate')) and utcdate(e['airDate'])>time.time())
+ if 'sonarr:%s:%s:%s'%(e.get('seriesId'),e.get('season'),e.get('number')) in notifications.stale_local_media(data.get('metadataUpdated',0)):e['localMedia']=None
  return e
 
 def submit(m,op,eid,selection):
@@ -498,7 +526,14 @@ def request_download(m,key,e,item,metainfo=None,start=True):
   if {i for i,x in enumerate(check['fileStats']) if x['wanted']}!=set(allwanted):raise UserError('Transmission не подтвердил точный выбор файлов; торрент не запущен')
   if current.get('monitored'):m.api('episode/monitor','PUT',{'episodeIds':[e['sonarrId']],'monitored':False})
   owned=old or {'hash':h,'wanted':[],'episodes':[]};owned['wanted']=allwanted
-  if not any(x['episode']['id']==e['id'] for x in owned['episodes']):owned['episodes'].append({'job':key,'episode':e,'video':video,'wanted':wanted,'state':'downloading','restoreMonitor':e.get('restoreMonitor',current.get('monitored',False)),'quality':row.get('quality'),'title':row.get('title')})
+  # The job key is the generation: a record that already finished or was
+  # cancelled never blocks a NEW member, so re-downloading the same torrent
+  # after cancellation announces again instead of being suppressed forever.
+  if not any(x['episode']['id']==e['id'] and x['state'] not in ('done','cancelled') for x in owned['episodes']):
+   # announceStart defers the "download started" event until the monitor
+   # OBSERVES transfer progress (bytes>0 or rate>0) on the selected files —
+   # torrent-start acceptance alone is not a transfer.
+   owned['episodes'].append({'job':key,'episode':e,'video':video,'wanted':wanted,'state':'downloading','announceStart':True,'restoreMonitor':e.get('restoreMonitor',current.get('monitored',False)),'quality':row.get('quality'),'title':row.get('title')})
   managed[h]=owned;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
   if start:m.trpc('torrent-start',{'ids':[tid]})
  return {'state':'downloading','message':'Загружаются только заказанные серии и их субтитры','hash':h}
@@ -653,11 +688,16 @@ def process_batch(m,members):
      if str(exc)=='Заказ отменён':report(m,key,'cancelled',str(exc));pending.pop(key)
     except Exception:logging.warning('Batch episode selection failed')
    # All selected episode files are enabled before starting the shared torrent.
+   # Announcements are deferred: each member sets announceStart and the monitor
+   # emits only once real transfer progress is observed on that member.
    with DOWNLOAD_LOCK:
-    managed=read(m.WORKER_STATE/'managed-downloads.json',{})
+    managed=read(m.WORKER_STATE/'managed-downloads.json',{});started=[]
     for h in hashes:
      owned=managed.get(h,{})
-     if owned.get('wanted') and any(x['state'] not in ('cancelled','done') for x in owned.get('episodes',[])):m.trpc('torrent-start',{'ids':[h]})
+     if owned.get('wanted') and any(x['state'] not in ('cancelled','done') for x in owned.get('episodes',[])):
+      started.append(h)
+    if started:
+     for h in started:m.trpc('torrent-start',{'ids':[h]})
  except UserError as exc:
   if str(exc)=='Заказ отменён':
    for key in pending:report(m,key,'cancelled',str(exc))
@@ -685,6 +725,10 @@ def monitor(m):
      # The episode's registered file is authoritative, not the command's final status.
      if actual.get('hasFile') and actual.get('episodeFileId') and actual.get('episodeFileId')!=e.get('_upgradeFileId') and (actual.get('episodeFile') or {}).get('size',0)>0:
       requested['state']='done';requested['importedFileId']=actual['episodeFileId'];changed=True;report(m,key,'done','Серия скачана и добавлена в медиатеку',percent=100)
+      notifications.emit_episode('library_ready',e,key)
+      # The previous localMedia facts (possibly of a replaced file) must not
+      # read as verified until the next refresh re-checks the library.
+      notifications.invalidate_local_media([e])
       if requested.get('restoreMonitor'):m.api('episode/monitor','PUT',{'episodeIds':[e['sonarrId']],'monitored':True})
       continue
      command=m.api('command/'+str(requested['command']))
@@ -699,7 +743,22 @@ def monitor(m):
     if completed<total:
      speed=t.get('rateDownload',0);eta=round((total-completed)/speed) if speed>0 else None
      report(m,key,'downloading','Загрузка серии' if speed else 'Ожидаем пиров / загрузка приостановлена',percent=round(100*completed/max(1,total),1),rate=speed,eta=eta,downloaded=completed,total=total)
+     # The deferred "download started" fires only on OBSERVED transfer
+     # progress (bytes>0 or rate>0) for this episode's selected files —
+     # queue acceptance alone never announces.
+     if requested.get('announceStart') and completed>0:
+      requested.pop('announceStart',None)
+      changed=True
+      notifications.emit_episode('download_started',e,key)
      continue
+    # The episode's exact wanted files completed — not a whole season pack.
+    # A transfer finished between monitor passes is still an observed start
+    # (bytes>0): announce it before the completion event, never both skipped.
+    if total<=0:continue
+    if requested.pop('announceStart',None):
+     notifications.emit_episode('download_started',e,key)
+     changed=True
+    notifications.emit_episode('torrent_complete',e,key)
     if e.get('_upgradeFileId'):
      if not upgrades.still_unwatched(m,e):
       requested['state']='cancelled';changed=True;report(m,key,'cancelled','Улучшение отменено: серия уже просмотрена');continue
@@ -716,10 +775,14 @@ def monitor(m):
   if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
 
 def run(m):
+ # The journal (epoch/cursor) must exist before any worker activity so native
+ # clients can register against a stable cursor immediately; initialization
+ # never requires upstream authentication and never raises into the loop.
+ notifications.journal_init()
  for path in (m.STATE/'requests').glob('*.json'):
   status=m.WORKER_STATE/'jobs'/path.name
   if read(status,{}).get('state') in ('queued','running'):status.unlink(missing_ok=True)
- active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0
+ active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0
  while True:
   now=time.time()
   for key,future in list(active.items()):
@@ -727,6 +790,10 @@ def run(m):
     try:future.result()
     except Exception:logging.warning('Episode worker task failed')
     active.pop(key,None)
+  # Bounded observer for downloads the panel did not start (Sonarr automatic
+  # search / lists / Jellyseerr): read-only Sonarr queue pass, its own slot.
+  if now-last_observe>=60 and 'notifications-observe' not in active and len(set(active.values()))<2:
+   active['notifications-observe']=POOL.submit(notifications.observe_sonarr,m);last_observe=now
   if now-last_daily>=60 and len(set(active.values()))<2:
    if 'daily-upgrades' not in active and upgrades.due(read(m.WORKER_STATE/'daily-upgrades.json',{})):
     active['daily-upgrades']=POOL.submit(upgrades.run_daily,m,sys.modules[__name__])

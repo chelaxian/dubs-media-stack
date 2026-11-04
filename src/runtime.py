@@ -71,6 +71,7 @@ def _settings_uncached():
         'timezone': cfg.get('timezone') or os.environ.get('SERIES_CONTROL_TIMEZONE', 'Europe/Moscow'),
         'owner_label': cfg.get('owner_label') or cfg.get('login') or 'Owner',
         'public_url': (cfg.get('public_url') or '').rstrip('/'),   # https://panel.example.com
+        'jellyfin_api_url': cfg.get('jellyfin_api_url', ''),  # non-secret login/logout transport; empty = connection fallback
         'jellyfin_url': (cfg.get('jellyfin_url') or '').rstrip('/'),  # https://jellyfin.example.com
         'mobile': cfg.get('mobile') or {},                     # {"artifacts":[{"file","label"}]}
         'paths': dict(cfg.get('paths') or {}),                 # host/container media roots
@@ -133,6 +134,28 @@ def indexer_endpoints():
             item.get('scheme') or 'http', item.get('tls_verify', True))
     return {h:{'ports':v['ports'],'prefixes':v['prefixes'],
                'tls':{k:sorted(vv) for k,vv in v['tls'].items()}} for h,v in allowed.items()}
+
+def jellyfin_api_base():
+    """Non-secret login transport, independent of the private metadata identity.
+
+    Empty keeps portable installs using their configured Jellyfin connection.
+    An explicit invalid URL fails closed, without reading that private file.
+    """
+    from urllib.parse import urlsplit
+    base = settings().get('jellyfin_api_url', '')
+    if base == '' or base is None:
+        base = connection('jellyfin')['base_url']
+    if not isinstance(base, str) or not base or any(ord(c) <= 32 or ord(c) == 127 for c in base) or '\\' in base:
+        raise ValueError('Invalid Jellyfin API base URL')
+    parsed = urlsplit(base)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or '?' in base or '#' in base or not parsed.netloc
+            or '%' in parsed.netloc):
+        raise ValueError('Invalid Jellyfin API base URL')
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        raise ValueError('Invalid Jellyfin API port')
+    return base.rstrip('/')
 
 def connection(name):
     """Service connection config: accepts {"base_url","key"} or legacy {"port","key"}."""

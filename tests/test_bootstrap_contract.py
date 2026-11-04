@@ -87,6 +87,12 @@ class FakeStack:
                 return 404, {'error': 'no schema for %s' % path}
             return 200, copy.deepcopy(schema)
         collection, _, rest = path.partition('/')
+        if collection == 'downloadclient' and method in ('POST', 'PUT'):
+            fields = {f['name']: f.get('value') for f in data.get('fields', [])}
+            for prefix in ('tv', 'movie', 'music'):
+                if fields.get(prefix + 'Category') and fields.get(prefix + 'Directory'):
+                    return 400, [{'propertyName': prefix.title() + 'Category',
+                                  'errorMessage': 'Cannot use Category and Directory'}]
         if rest:
             obj_id = int(rest)
             items = self.state[app].get(collection, [])
@@ -284,7 +290,7 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertFalse([c for c in lidarr_writes if 'customformat' in c[2]])
         client = stack.posted('lidarr', 'downloadclient')[0]
         self.assertEqual(client['implementation'], 'Transmission')
-        self.assertEqual(field(client, 'musicCategory'), 'dubs-music')
+        self.assertEqual(field(client, 'musicCategory'), '')
         self.assertEqual(field(client, 'musicDirectory'), '/downloads/complete/music')
 
     def test_lidarr_creates_default_from_schema_only_when_empty(self):
@@ -336,9 +342,9 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertEqual(puts[0].get('defaultMetadataProfileId'), 1)  # was unset
         self.assertEqual(puts[0].get('defaultMonitorOption'), 'none')  # "as needed"
 
-    # 4. Unique categories ----------------------------------------------------
+    # 4. Unique explicit download directories ----------------------------------------------------
 
-    def test_unique_categories_and_managed_client_name(self):
+    def test_unique_directories_and_managed_client_name(self):
         stack = FakeStack()
         run_bootstrap(stack)
         categories = {}
@@ -352,9 +358,7 @@ class BootstrapContractTests(unittest.TestCase):
                              '/downloads/complete/%s'
                              % {'sonarr': 'tv', 'radarr': 'movies',
                                 'lidarr': 'music'}[app])
-        self.assertEqual(categories, {'sonarr': 'dubs-tv',
-                                      'radarr': 'dubs-movies',
-                                      'lidarr': 'dubs-music'})
+        self.assertEqual(categories, dict.fromkeys(('sonarr', 'radarr', 'lidarr'), ''))
 
     # 5. Prowlarr managed indexer profile (minimumSeeders lives here) ---------
 
@@ -473,6 +477,75 @@ class BootstrapContractTests(unittest.TestCase):
                          ('transmission', '/downloads/', '/torrents/'))
         run_bootstrap(stack)
         self.assertEqual(len(stack.posted('sonarr', 'remotepathmapping')), 1)
+
+
+class TransmissionValidationTests(unittest.TestCase):
+    """Always run, including CI without the optional /tmp schema captures."""
+
+    def stack(self, app, prefix):
+        stack = object.__new__(FakeStack)
+        stack.calls = []
+        stack.state = {app: {}}
+        stack.schemas = {app: {'downloadclient/schema': [{
+            'implementation': 'Transmission', 'configContract': 'TransmissionSettings',
+            'fields': [{'name': name, 'value': value} for name, value in (
+                ('host', 'localhost'), ('port', 9091), ('username', ''),
+                ('password', ''), (prefix + 'Category', 'schema-default'),
+                (prefix + 'Directory', ''))]}]}}
+        return stack
+
+    def test_api_validator_rejects_category_and_directory_on_create_and_update(self):
+        for app, prefix in (('sonarr', 'tv'), ('radarr', 'movie'), ('lidarr', 'music')):
+            with self.subTest(app=app):
+                stack = self.stack(app, prefix)
+                payload = {'implementation': 'Transmission', 'fields': [
+                    {'name': prefix + 'Category', 'value': 'dubs-media'},
+                    {'name': prefix + 'Directory', 'value': '/downloads/complete/tv'}]}
+                for method, path in (('POST', 'downloadclient'), ('PUT', 'downloadclient/1')):
+                    status, errors = stack.handle(app, method, path, payload)
+                    self.assertEqual(status, 400)
+                    self.assertEqual(errors[0]['errorMessage'], 'Cannot use Category and Directory')
+                self.assertFalse(stack.objects(app, 'downloadclient'))
+
+    def test_directory_mode_clears_schema_category_and_updates_only_managed_client(self):
+        for app, prefix, folder in (('sonarr', 'tv', 'tv'), ('radarr', 'movie', 'movies'),
+                                    ('lidarr', 'music', 'music')):
+            with self.subTest(app=app):
+                stack = self.stack(app, prefix)
+                stack.add(app, 'downloadclient', {'name': 'My Transmission',
+                          'implementation': 'Transmission', 'fields': [
+                              {'name': prefix + 'Category', 'value': 'user-media'}]})
+                before = stack.objects(app, 'downloadclient')[0]
+                arr = bs.Arr(app, BASES[app], 'offline-key')
+                directory = '/downloads/complete/' + folder
+                with patch.object(bs.requests, 'request', side_effect=stack.request):
+                    first = arr.ensure_transmission_client('Dubs Transmission',
+                        prefix + 'Category', prefix + 'Directory', '', directory,
+                        'daemon-user', 'daemon-password')
+                    # Reproduce a previously stored draft payload; migrate only
+                    # our managed client away from contradictory settings.
+                    managed = stack.state[app]['downloadclient'][1]
+                    next(f for f in managed['fields']
+                         if f['name'] == prefix + 'Category')['value'] = 'dubs-media'
+                    second = arr.ensure_transmission_client('Dubs Transmission',
+                        prefix + 'Category', prefix + 'Directory', '', directory,
+                        'daemon-user', 'daemon-password')
+                self.assertEqual(first, second)
+                clients = stack.objects(app, 'downloadclient')
+                self.assertEqual(clients[0], before)
+                self.assertEqual(len(clients), 2)
+                self.assertEqual(field(clients[1], prefix + 'Category'), '')
+                self.assertEqual(field(clients[1], prefix + 'Directory'), directory)
+                self.assertEqual(field(clients[1], 'username'), 'daemon-user')
+                self.assertEqual(field(clients[1], 'password'), 'daemon-password')
+
+    def test_bootstrap_rejects_contradictory_routing_before_api_call(self):
+        arr = bs.Arr('sonarr', BASES['sonarr'], 'offline-key')
+        with patch.object(arr, 'call') as call:
+            with self.assertRaises(bs.ArrError):
+                arr.ensure_transmission_client('Dubs Transmission', 'tvCategory',
+                    'tvDirectory', 'dubs-tv', '/downloads/complete/tv')
+            call.assert_not_called()
 
 
 if __name__ == '__main__':

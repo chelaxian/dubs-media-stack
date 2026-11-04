@@ -2,6 +2,7 @@
 import datetime,re,secrets,time,logging
 from zoneinfo import ZoneInfo
 import runtime as rt
+import notifications
 
 def _tz():
  try:return ZoneInfo(rt.timezone_name())
@@ -109,14 +110,30 @@ def upgrade_one(m,ep,e):
  return 'unavailable'
 
 def run_daily(m,ep,dry=False):
+ """Once per local date at the configured zone/hour; dry runs never journal.
+ The started/result pair is journaled honestly: an aborted run still reports
+ an error outcome and errors are never disguised as "no improvements"."""
+ try:return _run_daily(m,ep,dry)
+ except Exception:
+  if not dry:
+   day=datetime.datetime.now(TZ).date().isoformat()
+   state=ep.read(m.WORKER_STATE/'daily-upgrades.json',{})
+   if state.get('day')==day and state.get('started') and not state.get('finished'):
+    notifications.upgrade_result(day,0,1,len(state.get('results',[])))
+    state.update({'finished':time.time(),'error':True});ep.atomic(m.WORKER_STATE/'daily-upgrades.json',state,0o600)
+  raise
+
+def _run_daily(m,ep,dry=False):
  path=m.WORKER_STATE/'daily-upgrades.json';state=ep.read(path,{})
  if not dry and not due(state):return
+ day=datetime.datetime.now(TZ).date().isoformat()
+ result={'day':day,'started':time.time(),'timezone':str(TZ),'results':[]}
+ if not dry:
+  ep.atomic(path,result,0o600)
+  notifications.upgrade_started(day)
  ep.refresh(m,True)
  snapshot=ep.read(m.WORKER_STATE/'myshows-episodes.json',{})
  if snapshot.get('error') or time.time()-snapshot.get('updated',0)>300:raise RuntimeError('Fresh MyShows snapshot required')
- day=datetime.datetime.now(TZ).date().isoformat()
- result={'day':day,'started':time.time(),'timezone':str(TZ),'results':[]}
- if not dry:ep.atomic(path,result,0o600)
  for group in snapshot.get('released',[]):
   for e in group['episodes']:
    if not e.get('hasFile') or not e.get('sonarrId') or e.get('future'):continue
@@ -130,5 +147,9 @@ def run_daily(m,ep,dry=False):
    result['results'].append({'episode':e['id'],'series':e['seriesTitle'],'season':e['season'],'number':e['number'],'status':status})
    if not dry:ep.atomic(path,result,0o600)
  result['finished']=time.time()
- if not dry:ep.atomic(path,result,0o600)
+ if not dry:
+  ep.atomic(path,result,0o600)
+  found=sum(1 for x in result['results'] if x['status']=='downloading')
+  errors=sum(1 for x in result['results'] if x['status'] in ('unavailable','error_existing_file_preserved'))
+  notifications.upgrade_result(day,found,errors,len(result['results']))
  return result

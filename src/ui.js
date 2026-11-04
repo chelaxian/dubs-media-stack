@@ -29,6 +29,21 @@ function syncSearchVisibility() {
   render();
   toast(hidden ? "Строка поиска скрыта" : "Строка поиска включена");
 });
+function mediaDetailsOn() {
+  return localStorage.getItem("dubs-hide-media-details") !== "1";
+}
+const mediaSwitch = $("media-details-switch");
+function syncMediaSwitch() {
+  if (mediaSwitch) mediaSwitch.setAttribute("aria-checked", String(mediaDetailsOn()));
+}
+mediaSwitch == null ? void 0 : mediaSwitch.addEventListener("click", () => {
+  const next = !mediaDetailsOn();
+  localStorage.setItem("dubs-hide-media-details", next ? "0" : "1");
+  syncMediaSwitch();
+  render();
+  toast(next ? "Качество и озвучка показываются" : "Компактный вид: качество и озвучка скрыты");
+});
+syncMediaSwitch();
 const voices = [...document.querySelectorAll(".show")];
 let tab = "released", data = null, loading = false, calendarMode = false, month = "", day = "", dialogEpisode = null, torrents = [];
 const searchCache = /* @__PURE__ */ new Map();
@@ -155,8 +170,37 @@ async function load(force = false) {
     loading = false;
   }
 }
+let pendingEpisode = null, pendingSection = null;
+function findEpisode(id) {
+  for (const g of (data == null ? void 0 : data.released) || []) for (const e of g.episodes) if (e.id === id) return e;
+  for (const g of (data == null ? void 0 : data.upcoming) || []) for (const e of g.episodes) if (e.id === id) return e;
+  return null;
+}
+function focusEpisode(id) {
+  pendingEpisode = null;
+  if (!id) {
+    toast("Некорректный адрес серии. Откройте журнал событий в настройках");
+    return;
+  }
+  const row = document.querySelector('[data-episode-id="' + id + '"]');
+  if (!row) {
+    toast("Серии нет в списке вышедших. Журнал событий — в настройках");
+    return;
+  }
+  const card = row.closest("details");
+  if (card && !card.open) card.open = true;
+  row.tabIndex = -1;
+  row.scrollIntoView({ block: "center" });
+  row.focus({ preventScroll: true });
+  const e = findEpisode(id);
+  if (e && e.localMedia && e.localMedia.status === "stale") toast("Локальная копия: данные файла устарели, файл мог быть заменён");
+  else if (e && e.localMedia && e.localMedia.status !== "verified") toast("Локальная копия: метаданные файла не подтверждены");
+}
 function route() {
-  const hash = location.hash.slice(1);
+  const raw = location.hash.slice(1);
+  const q = raw.indexOf("?");
+  const hash = q < 0 ? raw : raw.slice(0, q);
+  const query = new URLSearchParams(q < 0 ? "" : raw.slice(q + 1));
   tab = ["voice", "released", "upcoming", "settings"].includes(hash) ? hash : hash.startsWith("show-") ? "voice" : "released";
   for (const link of document.querySelectorAll("[data-tab]")) link.classList.toggle("active", link.dataset.tab === tab);
   for (const [id, name] of [["voice-view", "voice"], ["released-view", "released"], ["upcoming-view", "upcoming"], ["settings", "settings"]]) $(id).hidden = tab !== name;
@@ -170,8 +214,26 @@ function route() {
       const target = $(hash);
       if (target) target.open = true;
     }
-  } else if (tab === "settings") count("", "");
-  else load();
+  } else if (tab === "settings") {
+    count("", "");
+    if (query.get("section") === "events") pendingSection = "events";
+    loadEventsSettings();
+    if (pendingSection === "events") {
+      pendingSection = null;
+      setTimeout(() => {
+        const panel = $("events-panel");
+        if (!panel) return;
+        panel.tabIndex = -1;
+        panel.scrollIntoView({ block: "start" });
+        panel.focus({ preventScroll: true });
+        openJournal();
+      }, 50);
+    }
+  } else {
+    const ep = query.get("episode");
+    pendingEpisode = ep === null ? null : /^[1-9][0-9]{0,9}$/.test(ep) ? Number(ep) : 0;
+    load();
+  }
 }
 function filterVoices() {
   let visible = 0;
@@ -182,9 +244,80 @@ function filterVoices() {
   count(visible, "сериалов");
   $("empty-search").hidden = visible !== 0 || tab !== "voice";
 }
-function controls(e) {
+function mediaInfo(e) {
+  var _a2;
+  const m = (_a2 = e == null ? void 0 : e.localMedia) == null ? void 0 : _a2;
+  if (!m || typeof m !== "object") return null;
+  return {
+    status: m.status === "verified" || m.status === "stale" ? m.status : "unknown",
+    quality: m.quality && typeof m.quality === "object" ? m.quality : null,
+    tracks: Array.isArray(m.audioTracks) ? m.audioTracks.filter((t) => t && typeof t === "object") : [],
+    verifiedAt: typeof m.verifiedAt === "number" && m.verifiedAt > 0 ? m.verifiedAt : null,
+    source: m.source === "jellyfin" || m.source === "sonarr" ? m.source : null
+  };
+}
+function mediaShort(info) {
+  if (info.status === "verified") return info.quality != null && info.quality.label ? String(info.quality.label) : "Проверено";
+  if (info.status === "stale") return "Устарело";
+  return "Не подтверждено";
+}
+function channelLabel(channels) {
+  if (channels === 6) return "5.1";
+  if (channels === 2) return "2.0";
+  if (channels === 1) return "моно";
+  return typeof channels === "number" && channels > 0 ? String(channels) : "";
+}
+function mediaDetails(e) {
+  if (!mediaDetailsOn()) return null;
+  const info = mediaInfo(e);
+  if (!info) return null;
+  const id = "media-panel-" + e.id;
+  const toggle = node("button", mediaShort(info), "media-badge is-" + info.status);
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-controls", id);
+  const panel = node("div", void 0, "media-panel");
+  panel.id = id;
+  panel.hidden = true;
+  const note = info.status === "stale" ? "Данные файла устарели: файл мог быть заменён. Обновите список позже." : info.status === "unknown" ? "Метаданные файла не подтверждены." : "";
+  if (note) panel.append(node("p", note, "media-note"));
+  const q = info.quality;
+  if (q && typeof q.label === "string" && q.label) {
+    const parts = [q.label];
+    if (typeof q.width === "number" && q.width > 0 && typeof q.height === "number" && q.height > 0) parts.push(q.width + "×" + q.height);
+    if (q.codec) parts.push(String(q.codec));
+    if (q.hdr) parts.push(String(q.hdr));
+    if (q.source) parts.push("источник: " + (q.source === "jellyfin" ? "Jellyfin" : "Sonarr"));
+    panel.append(node("div", "Видео: " + parts.join(" · "), "media-line"));
+  } else panel.append(node("div", "Видео: данные недоступны", "media-line"));
+  if (info.verifiedAt) panel.append(node("div", "Файл проверен " + new Date(info.verifiedAt * 1e3).toLocaleString("ru-RU"), "media-line"));
+  if (!info.tracks.length) panel.append(node("div", "Аудиодорожки: неизвестны", "media-line"));
+  else {
+    const list = node("ul", void 0, "media-tracks");
+    for (const t of info.tracks) {
+      const bits = [t.label || t.languageLabel || t.language || "Дорожка " + (t.index != null ? Number(t.index) + 1 : list.children.length + 1)];
+      if (t.codec && !bits[0].toLowerCase().includes(String(t.codec).toLowerCase())) bits.push(String(t.codec));
+      const ch = channelLabel(t.channels);
+      if (ch && !bits[0].includes(ch)) bits.push(ch);
+      if (t.isDefault === true) bits.push("по умолчанию");
+      const li = node("li", bits.join(" · "));
+      if (t.title) li.append(node("span", "тег дорожки: " + t.title, "media-track-title"));
+      li.append(node("span", t.studio ? "студия: " + t.studio : "студия не указана в метаданных файла", "media-studio" + (t.studio ? "" : " is-unknown")));
+      list.append(li);
+    }
+    panel.append(node("div", "Аудиодорожки: " + info.tracks.length, "media-line"), list);
+  }
+  toggle.addEventListener("click", () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+  });
+  return { toggle, panel };
+}
+function controls(e, text) {
   var _a2, _b2, _c2;
   const box = node("div", void 0, "episode-actions");
+  const media = mediaDetails(e);
   const task = taskControls(e);
   if (((_a2 = currentTask(e)) == null ? void 0 : _a2.state) === "done") e.hasFile = true;
   if (e.future) {
@@ -217,6 +350,8 @@ function controls(e) {
   find.disabled = !e.sonarrId;
   find.addEventListener("click", () => openSearch(e));
   box.append(task || download, find);
+  if (media) box.append(media.toggle);
+  if (media && text) text.append(media.panel);
   if (((_c2 = currentTask(e)) == null ? void 0 : _c2.state) === "error") box.append(node("small", currentTask(e).message, "download-caption"));
   const watched = node("button", "✓", "watch-button");
   watched.type = "button";
@@ -446,6 +581,7 @@ function renderReleased() {
     details.append(summary);
     for (const e of eps) {
       const row = node("div", void 0, "episode-line");
+      row.dataset.episodeId = String(e.id);
       row.append(node("span", number(e), "episode-number"));
       const text = node("div");
       text.append(node("div", e.title, "episode-title"));
@@ -454,7 +590,7 @@ function renderReleased() {
       if (e.rating > 0) info += " · ★ " + Number(e.rating).toFixed(1);
       text.append(node("div", info, "episode-details"));
       if (!e.sonarrId) text.append(node("div", "Нумерация не сопоставлена с Sonarr", "episode-note"));
-      row.append(text, controls(e));
+      row.append(text, controls(e, text));
       details.append(row);
     }
     const card = node("div", void 0, "episode-card");
@@ -464,6 +600,7 @@ function renderReleased() {
   if (!total) parent.append(node("p", (data == null ? void 0 : data.updated) ? "Новых непросмотренных серий нет" : "Загружаем список MyShows…", "muted-empty"));
   parent.append(node("p", "Отметка просмотра передаётся в MyShows. Просмотренные файлы удаляются вашей автоматической очисткой.", "episode-note"));
   count(total, "серий");
+  if (pendingEpisode !== null) focusEpisode(pendingEpisode);
 }
 function calendarGrid(parent, items) {
   if (!month) return;
@@ -544,12 +681,13 @@ function renderUpcoming() {
       prev = e.calendarDate;
     }
     const row = node("article", void 0, "upcoming-line");
+    row.dataset.episodeId = String(e.id);
     const d = /* @__PURE__ */ new Date(e.calendarDate + "T12:00:00");
     const dayLabel = node("div", d.getDate(), "day-number");
     dayLabel.append(node("small", d.toLocaleDateString("ru-RU", { weekday: "short" })));
     const text = node("div");
     text.append(node("div", e.seriesTitle, "upcoming-title"), node("div", number(e) + " · " + e.title, "upcoming-subtitle"), node("div", relative(e), "episode-details"));
-    row.append(dayLabel, cover(e.seriesId), text, controls(e));
+    row.append(dayLabel, cover(e.seriesId), text, controls(e, text));
     parent.append(row);
   }
   if (!visible.length) parent.append(node("p", (data == null ? void 0 : data.updated) ? "MyShows пока не объявил новые серии на выбранную дату" : "Загружаем расписание MyShows…", "muted-empty"));
@@ -752,3 +890,269 @@ async function openPlayer(event, e) {
     toast(error.message);
   }
 }
+const EVENT_TYPES = ["download_started", "torrent_complete", "library_ready", "new_episode", "upgrade_started", "upgrade_result"];
+const EVENT_LABELS = { download_started: "Начало загрузки", torrent_complete: "Раздача скачана", library_ready: "Появилось в медиатеке", new_episode: "Новая серия", upgrade_started: "Ежедневная проверка замены", upgrade_result: "Результат замены" };
+const NATIVE_APP = /DubsNative|DubsTV/.test(navigator.userAgent);
+let eventsSettings = null, eventsPolling = false, journalBefore = null, journalLoading = false;
+function storeGet(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+function storeSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {}
+}
+function syncEventsControls(s) {
+  const master = $("events-account-enabled");
+  if (!master) return;
+  const types = Array.isArray(s == null ? void 0 : s.types) ? s.types : [];
+  master.disabled = false;
+  master.setAttribute("aria-checked", String((s == null ? void 0 : s.enabled) === true));
+  for (const t of EVENT_TYPES) {
+    const sw = document.querySelector('[data-event-type="' + t + '"]');
+    if (sw) {
+      sw.disabled = false;
+      sw.setAttribute("aria-checked", String(types.includes(t)));
+    }
+  }
+  const titles = $("events-show-titles");
+  if (titles) {
+    titles.disabled = false;
+    titles.setAttribute("aria-checked", String((s == null ? void 0 : s.showTitles) === true));
+  }
+}
+async function loadEventsSettings() {
+  if (!$("events-account-enabled")) return;
+  try {
+    const d = await json("/api/notifications/settings");
+    eventsSettings = d;
+    syncEventsControls(d);
+  } catch (e) {
+    const status = $("events-status");
+    if (status) status.textContent = "Настройки событий недоступны: " + e.message;
+  }
+}
+async function postEventsSettings() {
+  const types = EVENT_TYPES.filter((t) => {
+    const sw = document.querySelector('[data-event-type="' + t + '"]');
+    return sw && sw.getAttribute("aria-checked") === "true";
+  });
+  const body = new URLSearchParams({
+    csrf,
+    enabled: $("events-account-enabled").getAttribute("aria-checked") === "true" ? "true" : "false",
+    types: JSON.stringify(types),
+    show_titles: $("events-show-titles").getAttribute("aria-checked") === "true" ? "true" : "false"
+  });
+  try {
+    const d = await json("/api/notifications/settings", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
+    eventsSettings = d;
+    syncEventsControls(d);
+    toast("Настройки событий аккаунта сохранены");
+  } catch (e) {
+    toast(e.message);
+    await loadEventsSettings();
+  }
+}
+for (const sw of document.querySelectorAll("#events-account-enabled, #events-types .preference-switch")) {
+  sw.addEventListener("click", () => {
+    if (sw.disabled) return;
+    sw.setAttribute("aria-checked", String(sw.getAttribute("aria-checked") !== "true"));
+    postEventsSettings();
+  });
+}
+const deviceSwitch = $("events-device-enabled");
+if (deviceSwitch) {
+  const note = $("events-device-note");
+  const request = $("events-notify-request");
+  if (NATIVE_APP) {
+    deviceSwitch.hidden = true;
+    if (request) request.hidden = true;
+    if (note) note.textContent = "Уведомления на этом устройстве включаются в приложении Dubs. Переключатели выше задают типы событий для всего аккаунта.";
+  } else if (!("Notification" in window)) {
+    deviceSwitch.disabled = true;
+    if (note) note.textContent = "Этот браузер не поддерживает уведомления. Приложение Dubs может показывать события в фоне.";
+  } else if (Notification.permission === "denied") {
+    deviceSwitch.disabled = true;
+    if (note) note.textContent = "Уведомления запрещены в настройках браузера. Разрешите их для этого сайта или используйте приложение Dubs.";
+  } else {
+    deviceSwitch.setAttribute("aria-checked", String(storeGet("dubs-events-device", "off") === "on"));
+    if (Notification.permission === "default" && request) {
+      request.hidden = false;
+      request.addEventListener("click", async () => {
+        request.disabled = true;
+        try {
+          const result = await Notification.requestPermission();
+          if (result === "granted") {
+            storeSet("dubs-events-device", "on");
+            deviceSwitch.setAttribute("aria-checked", "true");
+            request.hidden = true;
+            toast("Браузерные уведомления разрешены. События показываются, пока панель открыта");
+          } else toast("Уведомления не разрешены. Дайте доступ позже или используйте приложение Dubs");
+        } finally {
+          request.disabled = false;
+        }
+      });
+    }
+    deviceSwitch.addEventListener("click", () => {
+      if (deviceSwitch.disabled) return;
+      const next = deviceSwitch.getAttribute("aria-checked") !== "true";
+      if (next && Notification.permission !== "granted") {
+        if (request && !request.hidden) request.focus();
+        toast("Сначала разрешите уведомления в браузере");
+        return;
+      }
+      storeSet("dubs-events-device", next ? "on" : "off");
+      deviceSwitch.setAttribute("aria-checked", String(next));
+      toast(next ? "События показываются, пока панель открыта" : "Уведомления на этом устройстве отключены");
+    });
+  }
+}
+function eventTime(ev) {
+  try {
+    return new Date(ev.created * 1e3).toLocaleString("ru-RU");
+  } catch (e) {
+    return "";
+  }
+}
+function journalItem(ev) {
+  const li = node("li", void 0, "journal-item");
+  const head = node("div", void 0, "journal-head");
+  head.append(node("span", EVENT_LABELS[ev.type] || "Событие", "journal-type is-" + (EVENT_LABELS[ev.type] ? ev.type : "unknown")));
+  if (ev.created) {
+    const time = node("time", eventTime(ev), "journal-time");
+    try {
+      time.setAttribute("datetime", new Date(ev.created * 1e3).toISOString());
+    } catch (e) {}
+    head.append(time);
+  }
+  li.append(head);
+  if (ev.title) li.append(node("div", ev.title, "journal-title"));
+  if (ev.message) li.append(node("div", ev.message, "journal-message"));
+  if (Number.isSafeInteger(ev.episodeId) && ev.episodeId > 0 && ev.episodeId <= 9999999999) {
+    const link = node("a", "Перейти к серии", "quiet journal-link");
+    link.href = "#released?episode=" + ev.episodeId;
+    li.append(link);
+  }
+  return li;
+}
+function openJournal() {
+  const box = $("events-journal");
+  if (!box) return;
+  box.hidden = false;
+  const toggle = $("events-journal-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "true");
+  if (journalBefore === null) loadJournalPage();
+}
+async function loadJournalPage() {
+  if (journalLoading) return;
+  journalLoading = true;
+  const list = $("events-journal-list");
+  const older = $("events-journal-older");
+  const empty = $("events-journal-empty");
+  try {
+    const suffix = journalBefore === null ? "" : "&before=" + journalBefore;
+    const d = await json("/api/notifications/history?limit=30" + suffix);
+    const items = (Array.isArray(d.events) ? d.events : []).filter((ev) => ev && Number.isFinite(ev.id));
+    if (list) {
+      if (journalBefore === null) list.replaceChildren();
+      for (const ev of items) list.append(journalItem(ev));
+    }
+    if (empty) empty.hidden = !!(list && list.children.length);
+    if (older) older.hidden = !(d.nextBefore && items.length);
+    journalBefore = d.nextBefore || void 0;
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    journalLoading = false;
+  }
+}
+{
+  const toggle = $("events-journal-toggle");
+  toggle == null ? void 0 : toggle.addEventListener("click", () => {
+    const box = $("events-journal");
+    if (!box) return;
+    if (box.hidden) openJournal();
+    else {
+      box.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+    }
+  });
+  const older = $("events-journal-older");
+  older == null ? void 0 : older.addEventListener("click", loadJournalPage);
+}
+function eventsEligible(ev, s) {
+  return !!(s && s.enabled === true && Array.isArray(s.types) && s.types.includes(ev.type));
+}
+function announceEvent(ev, s) {
+  if (NATIVE_APP) return;
+  if (storeGet("dubs-events-device", "off") !== "on") return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const showTitles = !!(s && s.showTitles === true);
+  try {
+    const instance = storeGet("dubs-events-instance", null);
+    const n = new Notification(showTitles && ev.title ? ev.title : "Dubs", { body: EVENT_LABELS[ev.type] || "Событие медиатеки", tag: "dubs-event-" + instance + "-" + ev.id });
+    n.addEventListener("click", () => {
+      n.close();
+      if (instance !== storeGet("dubs-events-instance", null)) return;
+      location.hash = Number.isSafeInteger(ev.episodeId) && ev.episodeId > 0 && ev.episodeId <= 9999999999 ? "#released?episode=" + ev.episodeId : "#settings?section=events";
+      window.focus();
+    });
+  } catch (e) {}
+}
+function validEventInstance(value) { return typeof value === "string" && /^[a-fA-F0-9]{32}$/.test(value); }
+function applyEvents(d) {
+  if (!d || typeof d !== "object") return;
+  const instance = validEventInstance(d.instanceId) ? d.instanceId : null;
+  if (instance === null || !Number.isSafeInteger(d.cursor) || d.cursor < 0) return;
+  const previous = storeGet("dubs-events-instance", null);
+  const rebase = instance !== previous;
+  if (rebase) { storeSet("dubs-events-seen", []); const list = $("events-journal-list"); if (list) list.replaceChildren(); journalBefore = null; }
+  if (instance !== null) storeSet("dubs-events-instance", instance);
+  if (d.cursor != null) storeSet("dubs-events-cursor", Number(d.cursor));
+  if (d.settings) {
+    eventsSettings = d.settings;
+    syncEventsControls(d.settings);
+  }
+  const seen = new Set(storeGet("dubs-events-seen", []));
+  const fresh = (Array.isArray(d.events) ? d.events : []).filter((ev) => ev && Number.isFinite(ev.id) && !seen.has(ev.id));
+  for (const ev of fresh) seen.add(ev.id);
+  storeSet("dubs-events-seen", [...seen].slice(-200));
+  if (rebase) return;
+  const list = $("events-journal-list");
+  const box = $("events-journal");
+  if (list && box && !box.hidden && fresh.length && journalBefore === void 0) {
+    for (const ev of fresh.slice().reverse()) list.prepend(journalItem(ev));
+    const empty = $("events-journal-empty");
+    if (empty) empty.hidden = !!list.children.length;
+  }
+  for (const ev of fresh) if (eventsEligible(ev, d.settings)) announceEvent(ev, d.settings);
+}
+async function pollEvents() {
+  if (eventsPolling || document.hidden) return;
+  if (!$("events-panel")) return;
+  eventsPolling = true;
+  try {
+    if (storeGet("dubs-events-cursor", null) === null) {
+      const d = await json("/api/notifications/history?limit=1");
+      storeSet("dubs-events-instance", validEventInstance(d.instanceId) ? d.instanceId : null);
+      storeSet("dubs-events-cursor", Number(d.cursor) || 0);
+      storeSet("dubs-events-seen", []);
+      return;
+    }
+    const d = await json("/api/notifications/events?after=" + storeGet("dubs-events-cursor", 0) + "&limit=100");
+    applyEvents(d);
+  } catch (e) {
+  } finally {
+    eventsPolling = false;
+  }
+}
+setInterval(pollEvents, 6e4);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) pollEvents();
+});
+pollEvents();

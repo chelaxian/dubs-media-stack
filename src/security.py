@@ -1,5 +1,5 @@
 """Bounded HTTP, persistent throttling and revocable owner sessions. No upstream secrets."""
-import base64,hashlib,hmac,http.client,ipaddress,json,logging,re,secrets,sqlite3,threading,time
+import os,base64,hashlib,hmac,http.client,ipaddress,json,logging,re,secrets,sqlite3,threading,time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from http.cookies import SimpleCookie
@@ -15,6 +15,7 @@ CONFIG=_security_config()
 DB=rt.state_root()/'security.sqlite3';GUARD=threading.RLock()
 KEY=bytes.fromhex(CONFIG['signing_key'])
 NATIVE_COOKIE_AGE=31536000
+DEVICE_TTL=180*86400;DEVICE_MAX=8;DEVICE_TOKEN_AGE=None
 
 def native_family(agent):
  match=re.search(r'(?:^| )DubsNative/[0-9.]+ (Android|iOS)(?: |$)',agent or '')
@@ -24,7 +25,9 @@ def native_family(agent):
 def agent_binding(agent,persistent=False):return native_family(agent) if persistent else agent[:512]
 def cookie_age(agent):return NATIVE_COOKIE_AGE if native_family(agent) else 28800
 def connect():
- c=sqlite3.connect(DB,timeout=5);c.execute('PRAGMA journal_mode=WAL');c.execute('CREATE TABLE IF NOT EXISTS rate (bucket TEXT, k TEXT, at REAL)');c.execute('CREATE INDEX IF NOT EXISTS rate_idx ON rate(bucket,k,at)');c.execute('CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, user TEXT, created REAL, seen REAL, csrf TEXT, agent TEXT)');c.execute('CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, at REAL)');
+ c=sqlite3.connect(DB,timeout=5);c.execute('PRAGMA journal_mode=WAL');c.execute('CREATE TABLE IF NOT EXISTS rate (bucket TEXT, k TEXT, at REAL)');c.execute('CREATE INDEX IF NOT EXISTS rate_idx ON rate(bucket,k,at)');c.execute('CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, user TEXT, created REAL, seen REAL, csrf TEXT, agent TEXT)');c.execute('CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, at REAL)')
+ os.chmod(DB,0o600)
+ c.execute('CREATE TABLE IF NOT EXISTS devices (device_id TEXT PRIMARY KEY, user TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, platform TEXT NOT NULL, created REAL NOT NULL, last_seen REAL NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0)')
  if 'persistent' not in [r[1] for r in c.execute('PRAGMA table_info(sessions)')]:c.execute('ALTER TABLE sessions ADD COLUMN persistent INTEGER NOT NULL DEFAULT 0');c.commit()
  return c
 
@@ -82,6 +85,40 @@ def cookies(handler,name):
  try:
   c=SimpleCookie();c.load(handler.headers.get('Cookie',''));return c[name].value if name in c else None
  except Exception:return None
+
+# --- Notification device tokens: opaque, hashed at rest, feed-read scope ONLY.
+# The raw token is returned exactly once at registration and never logged.
+def register_device(user,platform):
+ token=secrets.token_urlsafe(32);now=time.time()
+ with GUARD,connect() as c:
+  c.execute('DELETE FROM devices WHERE revoked=1 OR expires<?',(now,))
+  rows=c.execute('SELECT device_id FROM devices WHERE user=? AND revoked=0 ORDER BY last_seen DESC',(user,)).fetchall()
+  for old in rows[DEVICE_MAX-1:]:c.execute('UPDATE devices SET revoked=1 WHERE device_id=?',(old[0],))
+  device_id=secrets.token_hex(16)
+  c.execute('INSERT INTO devices(device_id,user,token_hash,platform,created,last_seen,expires,revoked) VALUES(?,?,?,?,?,?,?,0)',
+            (device_id,user,hashed(token),platform,now,now,now+DEVICE_TTL))
+ return device_id,token
+
+def device_token_auth(token):
+ """Verify a scoped feed-read token; anything else (sessions, CSRF, POSTs)
+ never consults this, so the token cannot authenticate any other route."""
+ if not isinstance(token,str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}',token):return None
+ now=time.time()
+ with GUARD,connect() as c:
+  row=c.execute('SELECT device_id,user,platform,expires,revoked FROM devices WHERE token_hash=?',(hashed(token),)).fetchone()
+  if not row or row[4] or row[3]<now:return None
+  c.execute('UPDATE devices SET last_seen=? WHERE device_id=?',(now,row[0]))
+ return {'deviceId':row[0],'user':row[1],'platform':row[2]}
+
+def device_rows(user):
+ with GUARD,connect() as c:
+  rows=c.execute('SELECT device_id,platform,last_seen FROM devices WHERE user=? AND revoked=0 ORDER BY last_seen DESC',(user,)).fetchall()
+ return [{'deviceId':r[0],'platform':r[1],'lastSeen':float(r[2])} for r in rows]
+
+def revoke_device(user,device_id):
+ if not isinstance(device_id,str) or not re.fullmatch(r'[0-9a-f]{32}',device_id):return False
+ with GUARD,connect() as c:
+  return c.execute('UPDATE devices SET revoked=1 WHERE device_id=? AND user=? AND revoked=0',(device_id,user)).rowcount==1
 
 def canonical_origin(origin):
  try:
@@ -147,7 +184,10 @@ class HardenedHandler(BaseHTTPRequestHandler):
   self.security_context=context(self)
   if self.security_context is None:self.send_error(403);return False
   if self.command not in ('GET','POST'):self.send_error(405);return False
-  if not self.path.startswith('/') or self.path.startswith('//') or len(self.path)>2048 or '?' in self.path or '#' in self.path:self.send_error(400);return False
+  # Query strings are allowed only for bounded allowlisted routes (the
+  # notification feed/history paging contract); fragments stay rejected and
+  # every route validates its own parameters strictly.
+  if not self.path.startswith('/') or self.path.startswith('//') or len(self.path)>2048 or '#' in self.path:self.send_error(400);return False
   if self.headers.get_all('Transfer-Encoding'):self.send_error(400);return False
   if not consume([('request-ip',self.security_context['client'],300,60),('request-global','all',1500,60)]):self.send_error(429);return False
   return True

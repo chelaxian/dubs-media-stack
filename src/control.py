@@ -12,6 +12,7 @@ sys.path.insert(0,str(rt.ui_dir()))
 import render as ui
 import security as sec
 import episodes
+import notifications
 import players
 STATE=rt.state_root()
 CFG=rt.settings()
@@ -378,6 +379,9 @@ def cleanup(dry=False):
  save('cleanup-status.json',{'time':time.time(),'state':'Предпросмотр' if dry else ('Проверка завершена с ошибками' if errors else 'Проверка завершена'),'files':deleted,'errors':errors})
 
 def worker():
+ # Epoch/cursor must exist before anything else serves or cleans up; the
+ # journal init never requires upstream authentication and never raises here.
+ notifications.journal_init()
  last=0
  while True:
   requested=load('cleanup-request.json',{}).get('requested',0)
@@ -405,6 +409,82 @@ class Handler(sec.HardenedHandler):
   sid=sec.cookies(self,'series_session');session=sec.session(sid,self.headers.get('User-Agent',''))
   if session and session.get('persistent'):self._persistent_cookie=sid
   return session
+ def query_params(self):
+  """Strict bounded query parsing for the notification paging contract."""
+  raw=urllib.parse.urlsplit(self.path).query
+  pairs=urllib.parse.parse_qs(raw,keep_blank_values=True,strict_parsing=True,max_num_fields=4,errors='strict')
+  if any(len(v)!=1 for v in pairs.values()):raise ValueError('Duplicate query field')
+  return {k:v[0] for k,v in pairs.items()}
+ def paged_int(self,raw,fallback):
+  """Digits-only bounded ints: Python's int() accepts '1_0' and '+5', the
+  paging contract must not."""
+  if raw is None:return fallback
+  if not re.fullmatch(r'[0-9]{1,12}',raw):raise ValueError('Invalid paging number')
+  return int(raw)
+ def bearer_token(self):
+  """None = no Authorization header; '' = present but unusable (always 401)."""
+  values=self.headers.get_all('Authorization') or []
+  if not values:return None
+  if len(values)!=1:return ''
+  match=re.fullmatch(r'Bearer ([A-Za-z0-9_-]{43})',values[0])
+  return match[1] if match else ''
+ def notifications_get(self):
+  route=urllib.parse.urlsplit(self.path).path
+  if route!='/api/notifications/events':
+   if route not in ('/api/notifications/settings','/api/notifications/devices','/api/notifications/history'):self.send_error(404);return
+   if route!='/api/notifications/history' and urllib.parse.urlsplit(self.path).query:self.send_error(400);return
+   session=self.session()
+   if not session:self.send_error(401);return
+   if route=='/api/notifications/settings':self.json_output(notifications.get_settings());return
+   if route=='/api/notifications/devices':self.json_output({'devices':sec.device_rows(session['user'])});return
+   try:
+    params=self.query_params();
+    if set(params)-{'before','limit'}:raise ValueError('query')
+    limit=self.paged_int(params.get('limit'),50);before=self.paged_int(params.get('before'),notifications.tail()+1)
+   except (ValueError,TypeError):self.send_error(400);return
+   if not 1<=limit<=100 or before<0:self.send_error(400);return
+   page=notifications.history_page(before,limit);page['instanceId']=notifications.instance_id()
+   self.json_output(page);return
+  # The scoped device token authorizes ONLY this read-only feed; an
+  # Authorization header that is present but unusable never falls back to
+  # the session cookie.
+  token=self.bearer_token()
+  if token=='':self.send_error(401);return
+  if token is None:
+   session=self.session()
+   if not session:self.send_error(401);return
+  else:
+   device=sec.device_token_auth(token)
+   if not device:self.send_error(401);return
+   if not sec.consume([('notif-feed',device['deviceId'],120,60)]):self.send_error(429);return
+  try:
+   params=self.query_params();
+   if set(params)-{'after','limit'}:raise ValueError('query')
+   after=self.paged_int(params.get('after'),0);limit=self.paged_int(params.get('limit'),50)
+  except (ValueError,TypeError):self.send_error(400);return
+  if after<0 or not 1<=limit<=100:self.send_error(400);return
+  page=notifications.events_page(after,limit)
+  page['instanceId']=notifications.instance_id();page['settings']=notifications.get_settings()
+  self.json_output(page)
+ def notifications_post(self,s,data):
+  if self.path=='/api/notifications/settings':
+   if data['enabled'] not in ('true','false') or data['show_titles'] not in ('true','false') or len(data['types'])>512:raise ValueError('Invalid settings')
+   try:types=json.loads(data['types'])
+   except ValueError:raise ValueError('Invalid types')
+   if not isinstance(types,list) or len(types)>len(notifications.EVENT_TYPES) or any(not isinstance(x,str) or x not in notifications.EVENT_TYPES or len(x)>64 for x in types):raise ValueError('Invalid types')
+   if not sec.consume([('notif-settings',s['user'],20,300)]):self.send_error(429);return
+   self.json_output(notifications.save_settings(data['enabled']=='true',list(dict.fromkeys(types)),data['show_titles']=='true'));return
+  if self.path=='/api/notifications/devices':
+   if data['platform'] not in ('android','android_tv','ios'):raise ValueError('Invalid platform')
+   if not sec.consume([('notif-device',s['user'],6,3600)]):self.send_error(429);return
+   epoch=notifications.instance_id()
+   if not epoch:self.send_error(503);return
+   device_id,token=sec.register_device(s['user'],data['platform'])
+   # The raw token exists only in this one response; storage is hashed.
+   self.json_output({'deviceId':device_id,'token':token,'cursor':notifications.tail(),'instanceId':epoch});return
+  if not sec.consume([('notif-revoke',s['user'],10,300)]):self.send_error(429);return
+  if not sec.revoke_device(s['user'],data['deviceId']):self.send_error(404);return
+  self.json_output({'ok':True})
  def end_headers(self):
   if getattr(self,'_persistent_cookie',None) and self.path not in ('/logout','/login'):self.send_header('Set-Cookie',self.cookie('series_session',self._persistent_cookie,sec.NATIVE_COOKIE_AGE))
   super().end_headers()
@@ -443,6 +523,8 @@ class Handler(sec.HardenedHandler):
    session=self.session()
    if not session:self.json_output({'message':'Сеанс истёк. Войдите заново'},401);return
    self.json_output({'csrf':session['csrf'],'userId':session['user']});return
+  if urllib.parse.urlsplit(self.path).path.startswith('/api/notifications/'):
+   self.notifications_get();return
   if self.path=='/api/episodes' or self.path.startswith('/api/jobs/'):
    if not self.session():self.send_error(401);return
    try:data=episodes.snapshot(sys.modules[__name__]) if self.path=='/api/episodes' else episodes.result(sys.modules[__name__],self.path.removeprefix('/api/jobs/'))
@@ -468,14 +550,14 @@ class Handler(sec.HardenedHandler):
  def do_POST(self):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    self.send_error(403);return
-  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action'):self.send_error(404);return
+  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke'):self.send_error(404);return
   if not self.check_post():return
   try:
    raw=self.rfile.read(int(self.headers['Content-Length']))
    data=urllib.parse.parse_qs(raw.decode('utf-8'),keep_blank_values=True,strict_parsing=True,max_num_fields=8,errors='strict')
    if any(len(v)!=1 for v in data.values()):raise ValueError('Duplicate field')
    data={k:v[0] for k,v in data.items()}
-   fields={'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'}}
+   fields={'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'},'/api/notifications/settings':{'csrf','enabled','types','show_titles'},'/api/notifications/devices':{'csrf','platform'},'/api/notifications/revoke':{'csrf','deviceId'}}
    if set(data)!=fields[self.path]:raise ValueError('Fields do not match')
    if self.path=='/login':self.login(data);return
    s=self.session()
@@ -484,6 +566,11 @@ class Handler(sec.HardenedHandler):
     self.send_error(403);return
    if self.path=='/logout':
     sec.logout(sec.cookies(self,'series_session'));self.send_response(303);self.send_header('Location','/');self.send_header('Set-Cookie',self.cookie('series_session','',0));self.end_headers();return
+   # Notification management POSTs answer JSON and carry their own narrow
+   # rate limits; a scoped device token can never reach here (session+CSRF
+   # only, checked above).
+   if self.path.startswith('/api/notifications/'):
+    self.notifications_post(s,data);return
    if not sec.consume([('actions',s['user'],30,60)]):self.send_error(429);return
    if self.path=='/api/action':
     try:
@@ -532,7 +619,8 @@ class Handler(sec.HardenedHandler):
   if not AUTH_LOCK.acquire(blocking=False):self.send_error(503);return
   try:
    try:
-    r=requests.post(rt.connection('jellyfin')['base_url']+'/Users/AuthenticateByName',headers={'Authorization':'MediaBrowser Client="SeriesControl", Device="Web", DeviceId="series-control", Version="2.0"'},json={'Username':username,'Pw':data['password']},timeout=(3,10))
+    jellyfin_base=rt.jellyfin_api_base()
+    r=requests.post(jellyfin_base+'/Users/AuthenticateByName',headers={'Authorization':'MediaBrowser Client="SeriesControl", Device="Web", DeviceId="series-control", Version="2.0"'},json={'Username':username,'Pw':data['password']},timeout=(3,10),allow_redirects=False)
     if r.status_code>=500:self.send_error(503);return
     if r.status_code!=200:denied();return
     result=r.json();user=result['User']
@@ -540,7 +628,7 @@ class Handler(sec.HardenedHandler):
     key,csrf=sec.new_session(user['Id'],self.headers.get('User-Agent',''),sec.cookies(self,'series_session'))
     # Do not retain a broad Jellyfin access token after checking the identity.
     if result.get('AccessToken'):
-     try:requests.post(rt.connection('jellyfin')['base_url']+'/Sessions/Logout',headers={'X-Emby-Token':result['AccessToken']},timeout=3)
+     try:requests.post(jellyfin_base+'/Sessions/Logout',headers={'X-Emby-Token':result['AccessToken']},timeout=3,allow_redirects=False)
      except requests.RequestException:pass
     target=sec.cookies(self,'series_download');location='/apps/'+target if target in mobile_artifact_names() else '/'
     self.send_response(303);self.send_header('Location',location);self.send_header('Set-Cookie',self.cookie('series_session',key,sec.cookie_age(self.headers.get('User-Agent',''))));self.send_header('Set-Cookie',self.cookie('series_login','',0));self.send_header('Set-Cookie',self.cookie('series_download','',0));self.end_headers()

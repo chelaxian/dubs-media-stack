@@ -157,7 +157,11 @@ Bootstrap **сам запустит остановленный фид** `dubs-my
 именами**: профили «Dubs RU 2160p/1080p» (1080/2160, `upgradeAllowed=false` —
 качество поднимает только ежедневный проход панели в 18:00), форматы
 «Озвучка NN — …» по `studios.json` (13 именованных студий + fallback-запись),
-RU-veto, клиент «Dubs Transmission» с категориями `dubs-tv`/`dubs-movies`/`dubs-music`,
+RU-veto, клиент «Dubs Transmission» с отдельными каталогами загрузки
+`/downloads/complete/tv`, `/downloads/complete/movies`, `/downloads/complete/music`
+для Sonarr, Radarr и Lidarr соответственно. Поля Category очищены: Transmission
+не допускает одновременно Category и Directory. Каталоги разделяют назначения
+загрузок и очереди приложений. Сохраняются
 remote-path mapping `transmission: /downloads/ → /torrents/`, приложения
 «Sonarr/Radarr/Lidarr (Dubs)» в Prowlarr, профиль индексаторов «Dubs»
 (minimumSeeders = 3) и импорт-лист «MyShows watching (Dubs feed)»

@@ -197,6 +197,8 @@ class Arr:
         'Transmission' (or anything else) stays alone. A foreign client that
         carries our managed name is a conflict, never silently overwritten.
         """
+        if category and directory:
+            raise ArrError('Transmission Category and Directory are mutually exclusive')
         schemas = self.call('downloadclient/schema')
         template = next(s for s in schemas if s['implementation'] == 'Transmission')
         values = {'host': CONTAINER_HOST, 'port': 9091,
@@ -469,9 +471,12 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         sonarr.refresh_profile_clones(p2160, scores, veto_format)
         + sonarr.refresh_profile_clones(p1080, scores, veto_format))
 
-    # 3. Clients/mappings/root folders + Prowlarr applications.
+    # 3. Explicit directories isolate app queues as well as download destinations.
+    # Transmission rejects Category + Directory together; clear schema category
+    # defaults explicitly rather than relying on their current default values.
+    # Clients/mappings/root folders + Prowlarr applications.
     _wire_app(sonarr, deployment, conn, 'tvCategory', 'tvDirectory',
-              'dubs-tv', '/downloads/complete/tv', '/tv', prowlarr=prowlarr,
+              '', '/downloads/complete/tv', '/tv', prowlarr=prowlarr,
               app_implementation='Sonarr')
     report['sonarr'] = 'wired'
     if 'radarr' in conn and conn['radarr'].get('base_url'):
@@ -485,7 +490,7 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
             radarr.refresh_profile_clones(rp2160, radarr_scores, veto_format)
             + radarr.refresh_profile_clones(rp1080, radarr_scores, veto_format))
         _wire_app(radarr, deployment, conn, 'movieCategory', 'movieDirectory',
-                  'dubs-movies', '/downloads/complete/movies', '/movies',
+                  '', '/downloads/complete/movies', '/movies',
                   prowlarr=prowlarr, app_implementation='Radarr')
         report['radarr'] = 'wired'
     if 'lidarr' in conn and conn['lidarr'].get('base_url'):
@@ -508,7 +513,7 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         if cfg.get('default_tags'):
             defaults['defaultTags'] = list(cfg['default_tags'])
         _wire_app(lidarr, deployment, conn, 'musicCategory', 'musicDirectory',
-                  'dubs-music', '/downloads/complete/music', '/music',
+                  '', '/downloads/complete/music', '/music',
                   root_defaults=defaults, root_name='Dubs Music',
                   prowlarr=prowlarr, app_implementation='Lidarr')
         report['lidarr'] = 'wired'

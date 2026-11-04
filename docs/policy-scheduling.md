@@ -88,15 +88,18 @@ bulk-заказ). Автоматизация `recent_episodes` ретраит **
 
 - **Radarr** получает ту же полную голосовую политику, что Sonarr: та же
   семья форматов озвучки с теми же очками, те же профили «Dubs RU 2160p/1080p»
-  и RU-veto; категория загрузок — `dubs-movies`.
+  и RU-veto; каталог загрузок — `/downloads/complete/movies`.
 - **Lidarr** — музыка через **API v1** и музыкальные профили качества/
   метаданных; сериальные голосовые форматы и RU-veto на него **не**
-  распространяются. Категория загрузок — `dubs-music`; root folder «Dubs Music»
+  распространяются. Каталог загрузок — `/downloads/complete/music`; root folder «Dubs Music»
   получает дефолты из существующих профилей (id из скелета не выдумывается:
   операторный `lidarr.json → quality_profile_id`/`metadata_profile_id` или
   первый валидный существующий профиль).
-- У каждого приложения своя категория Transmission: `dubs-tv` / `dubs-movies` /
-  `dubs-music` — путаницы между типами медиа нет.
+- Transmission использует отдельные каталоги: Sonarr — `/downloads/complete/tv`,
+  Radarr — `/downloads/complete/movies`, Lidarr — `/downloads/complete/music`.
+  Category пустая: API не допускает её совместно с Directory. Раздельные каталоги
+  сохраняют изоляцию очередей и типов медиа; mapping `/downloads/ → /torrents/`
+  остаётся общим для каждого приложения.
 
 ## Расписания (systemd)
 

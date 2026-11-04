@@ -268,6 +268,27 @@ if SMOKE:
             cls.studios = json.loads((REPO / 'studios.json').read_text())
             from installer.configgen import CONFIG_EXAMPLE
             cls.veto = CONFIG_EXAMPLE['veto_format']
+            # Seed disabled user-owned clients in this disposable stack. Bootstrap
+            # must leave their API representations unchanged, including on rerun.
+            cls.user_clients = {}
+            for app, prefix, folder in (('sonarr', 'tv', 'tv'),
+                                        ('radarr', 'movie', 'movies'),
+                                        ('lidarr', 'music', 'music')):
+                arr = cls.arr(app)
+                template = next(c for c in arr.call('downloadclient/schema')
+                                if c['implementation'] == 'Transmission')
+                bs._set_fields(template.get('fields'), {
+                    'host': 'transmission', 'port': 9091,
+                    'username': cls.stack.transmission_user,
+                    'password': cls.stack.transmission_pass,
+                    prefix + 'Category': '',
+                    prefix + 'Directory': '/downloads/complete/' + folder})
+                template.update({'name': 'Smoke user Transmission', 'enable': False,
+                                 'protocol': 'torrent',
+                                 'removeCompletedDownloads': False,
+                                 'removeFailedDownloads': False})
+                created = arr.call('downloadclient', 'POST', template)
+                cls.user_clients[app] = arr.call('downloadclient/%d' % created['id'])
             # the REAL bootstrap, once, shared by the ordered assertions
             log('calling bootstrap(deployment, studios, %r, %s)'
                 % (cls.veto, cls.feed_url))
@@ -347,9 +368,34 @@ if SMOKE:
             self.assertEqual(len(clients), 1)
             fields = self.field_map(clients[0])
             self.assertEqual(fields['host'], 'transmission')
-            self.assertEqual(fields['tvCategory'], 'dubs-tv')
+            self.assertEqual(fields.get('tvCategory') or '', '')
+            self.assertEqual(fields['tvDirectory'], '/downloads/complete/tv')
             self.assertEqual(fields['username'], self.stack.transmission_user)
             self.assertTrue(fields['password'])  # seeded, never empty
+            directories = []
+            for app, prefix, folder in (('sonarr', 'tv', 'tv'),
+                                        ('radarr', 'movie', 'movies'),
+                                        ('lidarr', 'music', 'music')):
+                arr = self.arr(app)
+                managed = [c for c in arr.call('downloadclient')
+                           if c['name'] == 'Dubs Transmission']
+                self.assertEqual(len(managed), 1)
+                configured = self.field_map(managed[0])
+                self.assertEqual(configured.get(prefix + 'Category') or '', '')
+                self.assertEqual(configured[prefix + 'Directory'],
+                                 '/downloads/complete/' + folder)
+                directories.append(configured[prefix + 'Directory'])
+                self.assertEqual(configured['host'], 'transmission')
+                self.assertEqual(configured['username'], self.stack.transmission_user)
+                self.assertTrue(configured['password'])
+                user = self.user_clients[app]
+                self.assertEqual(arr.call('downloadclient/%d' % user['id']), user)
+                mappings = [m for m in arr.call('remotepathmapping')
+                            if m['host'] == 'transmission']
+                self.assertEqual(len(mappings), 1)
+                self.assertEqual((mappings[0]['remotePath'], mappings[0]['localPath']),
+                                 ('/downloads/', '/torrents/'))
+            self.assertEqual(len(set(directories)), 3)
             # remote path mapping transmission -> sonarr
             mappings = [m for m in sonarr.call('remotepathmapping')
                         if m['host'] == 'transmission']
@@ -421,6 +467,11 @@ if SMOKE:
             before_lists = len([l for l in self.arr('sonarr').call('importlist')
                                 if l['name'] == 'MyShows watching (Dubs feed)'])
             report2 = self.do_bootstrap()
+            for app, user in self.user_clients.items():
+                arr = self.arr(app)
+                self.assertEqual(arr.call('downloadclient/%d' % user['id']), user)
+                self.assertEqual(len([c for c in arr.call('downloadclient')
+                                      if c['name'] == 'Dubs Transmission']), 1)
             after_profiles = {p['name']: p['id']
                               for p in self.arr('sonarr').call('qualityprofile')}
             self.assertEqual(report2['profiles'], self.report['profiles'])
