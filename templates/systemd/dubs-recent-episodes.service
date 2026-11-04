@@ -1,0 +1,31 @@
+# One-shot: retry monitored, aired episodes from the past 48h (bounded).
+# Runs on the backend uid (private backend group owns the service
+# credentials; shared status group reads web-owned preferences). Its own
+# state lives under the private worker root; no media paths at all.
+# systemctl enable dubs-recent-episodes.timer
+
+[Unit]
+Description=Dubs recent-episode retry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+SupplementaryGroups=@SHARED_GROUP@
+Environment=DUBS_SRC=@REPO@/src
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=SERIES_CONTROL_FEED_STATE=@FEED_STATE@
+Environment=DUBS_RECENT_STATE=@WORKER_ROOT@/recent-episodes.json
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/automations/recent_episodes.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=@WORKER_ROOT@
+ReadOnlyPaths=@STATE_ROOT@ @CONFIG_ROOT@
+
+[Install]
+WantedBy=multi-user.target

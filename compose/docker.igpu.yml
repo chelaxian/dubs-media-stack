@@ -1,0 +1,13 @@
+# Opt-in Intel/AMD iGPU (VA-API) passthrough for Jellyfin hardware transcoding.
+#
+# Enable with:
+#   docker compose -f docker-compose.yml -f docker.igpu.yml up -d jellyfin
+#
+# RENDER_GID is the numeric id of the host "render" group (usually 104 on
+# Debian/Ubuntu): get with `getent group render | cut -d: -f3`.
+services:
+  jellyfin:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:?Set RENDER_GID to the render group id: getent group render | cut -d: -f3}"

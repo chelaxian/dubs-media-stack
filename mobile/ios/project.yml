@@ -1,0 +1,42 @@
+name: Dubs
+options:
+  bundleIdPrefix: app.dubs.panel
+  deploymentTarget:
+    iOS: '17.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    CODE_SIGNING_ALLOWED: NO
+    IPHONEOS_DEPLOYMENT_TARGET: '17.0'
+targets:
+  Dubs:
+    type: application
+    platform: iOS
+    sources: [Dubs]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.dubs.panel
+        PRODUCT_NAME: Dubs
+        TARGETED_DEVICE_FAMILY: '1,2'
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Dubs/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  DubsUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [DubsUITests]
+    dependencies:
+      - target: Dubs
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.dubs.panel.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Dubs
+schemes:
+  Dubs:
+    build:
+      targets:
+        Dubs: all
+        DubsUITests: [test]
+    test:
+      targets: [DubsUITests]

@@ -1,0 +1,45 @@
+# Dubs panel — web role (template: dubs-panel@.service)
+# Instantiated per config root: systemctl enable dubs-panel@main
+# Rendered values (placeholders are replaced by installer/cli.py install).
+# Least privilege: the web role serves the UI and talks to service APIs;
+# it may write web state and the poster cache only — never media files,
+# never worker state, never the docker socket, never backend-only service
+# credentials (transmission/prowlarr/radarr/lidarr/jackett, which are
+# root:<backend> 0640 on disk and inaccessible here as defence in depth).
+# It still READS public worker output (job/snapshot/history, 0640 in the
+# shared group) so the UI keeps working.
+
+[Unit]
+Description=Dubs panel web role (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@PANEL_USER@
+Group=@PANEL_GROUP@
+Environment=SERIES_CONTROL_ROLE=web
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=SERIES_CONTROL_STATE_ROOT=@STATE_ROOT@
+Environment=SERIES_CONTROL_WORKER_ROOT=@WORKER_ROOT@
+Environment=SERIES_CONTROL_UI_DIR=@REPO@/src
+Environment=SERIES_CONTROL_STUDIOS=@STUDIOS@
+Environment=SERIES_CONTROL_FEED_STATE=@FEED_STATE@
+Environment=SERIES_CONTROL_COVERS=@COVERS@
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/src/control.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=@STATE_ROOT@ @COVERS@
+ReadOnlyPaths=@CONFIG_ROOT@ @FEED_STATE@ @WORKER_ROOT@
+# No media roots (the web role never touches media), no container runtime
+# sockets, no backend-only credential files, no private worker state. The
+# '-' prefix keeps the unit startable when an optional path does not exist.
+InaccessiblePaths=-@TORRENT_HOST@ -@SHOWS_HOST@ -/run/docker.sock -/var/run/docker.sock -/run/containerd/ -@CONFIG_ROOT@/transmission.json -@CONFIG_ROOT@/prowlarr.json -@CONFIG_ROOT@/radarr.json -@CONFIG_ROOT@/lidarr.json -@CONFIG_ROOT@/jackett.json -@WORKER_ROOT@/release-cache/ -@WORKER_ROOT@/pending-sources.json -@WORKER_ROOT@/managed-downloads.json -@WORKER_ROOT@/scheduled-downloads.json -@WORKER_ROOT@/cancelled-episodes.json
+
+[Install]
+WantedBy=multi-user.target

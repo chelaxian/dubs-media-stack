@@ -1,0 +1,5 @@
+# Runtime dependency of the panel/automations/installer bootstrap.
+# Keep to the stable 2.x line. On Debian 12/13 and Ubuntu 24.04 the apt
+# package python3-requests satisfies this — the installer installs that;
+# pip is only needed in dev/test environments.
+requests>=2,<3

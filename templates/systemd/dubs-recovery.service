@@ -1,0 +1,33 @@
+# One-shot: detect stalled/failed downloads, reannounce or replace them
+# with bounded retries per scope. Lock file prevents overlapping runs.
+# Runs on the backend uid (needs the transmission/sonarr credentials in the
+# private backend/shared groups); its own state lives under the private
+# worker root. Torrent storage is read-only here (disk headroom checks);
+# recovery never deletes data.
+# systemctl enable dubs-recovery.timer
+
+[Unit]
+Description=Dubs download recovery pass
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+SupplementaryGroups=@SHARED_GROUP@
+Environment=DUBS_SRC=@REPO@/src
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=DUBS_RECOVERY_STATE=@WORKER_ROOT@/recovery/state.json
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/automations/download_recovery.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Needs read access to the host torrent storage for disk headroom checks.
+ReadWritePaths=@WORKER_ROOT@
+ReadOnlyPaths=-@TORRENT_HOST@ @CONFIG_ROOT@ @STATE_ROOT@
+
+[Install]
+WantedBy=multi-user.target

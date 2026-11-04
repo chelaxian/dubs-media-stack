@@ -1,0 +1,39 @@
+# Dubs panel — operations role (episode retry/monitor loop).
+# Talks to Sonarr/Transmission APIs; touches no media files at all (torrents
+# are added over the Transmission RPC, library changes over the Sonarr API).
+# Runs on the backend uid with the private backend group (owns the
+# transmission/prowlarr credentials it needs) plus the shared status group
+# (reads web-owned preferences and the web's job-request markers).
+# systemctl enable dubs-operations@main
+
+[Unit]
+Description=Dubs operations role (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+SupplementaryGroups=@SHARED_GROUP@
+Environment=SERIES_CONTROL_ROLE=operations
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=SERIES_CONTROL_STATE_ROOT=@STATE_ROOT@
+Environment=SERIES_CONTROL_WORKER_ROOT=@WORKER_ROOT@
+Environment=SERIES_CONTROL_UI_DIR=@REPO@/src
+Environment=SERIES_CONTROL_STUDIOS=@STUDIOS@
+Environment=SERIES_CONTROL_FEED_STATE=@FEED_STATE@
+Environment=SERIES_CONTROL_COVERS=@COVERS@
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/src/control.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=@WORKER_ROOT@ @COVERS@
+ReadOnlyPaths=@STATE_ROOT@ @CONFIG_ROOT@ @FEED_STATE@
+
+[Install]
+WantedBy=multi-user.target

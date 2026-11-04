@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Dubs recent-episode retry every 30 minutes
+
+[Timer]
+OnCalendar=*:0/30
+RandomizedDelaySec=120
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,135 @@
+# dubs-media-stack — everything runtime/local/secret stays out of git.
+# Only source is tracked: code, tests, docs, templates, compose assets,
+# studios.json and example fixtures. There is deliberately NO blanket
+# `*.json` rule — ignoring json by name would silently exclude fixtures
+# and examples; every runtime/secret filename below is explicit.
+
+# --- operator-local directories (repo root; local runs only) --------------
+/runtime/
+/data/
+/state/
+/private/
+/secrets/
+/appdata/
+/operator-config/
+/cache/
+/debug/
+/.local/
+backups/
+logs/
+
+# --- secrets & operator-owned local config --------------------------------
+compose/.env
+**/.env
+.env.*
+**/*.env
+**/config.json
+**/security.json
+*.local
+*.local.*
+**/local.properties
+
+# per-service connection configs (base_url + API keys / RPC credentials)
+**/sonarr.json
+**/radarr.json
+**/lidarr.json
+**/prowlarr.json
+**/transmission.json
+**/jellyfin.json
+**/seerr.json
+**/jackett.json
+
+# panel/web state holding credentials and owner preferences
+**/myshows-auth.json
+**/preferences.json
+**/cleanup-request.json
+**/cleanup-status.json
+
+# worker/operations state
+**/managed-downloads.json
+**/pending-sources.json
+**/deleted.json
+
+# MyShows feed state (personal watchlist data)
+**/profile.json
+**/mapping.json
+**/series.json
+**/status.json
+
+# any credential/token/secret JSON — never in git
+**/*credential*.json
+**/*token*.json
+**/*secret*.json
+
+# keys, certs, keystores
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mobileprovision
+
+# --- databases & sidecars ---------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+*-journal
+
+# --- backups & logs --------------------------------------------------------
+*.tar.gz
+*.tgz
+*.bak
+*.log
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+.pytest_cache/
+.tox/
+
+# --- node (mobile dev tooling) ---------------------------------------------
+node_modules/
+
+# --- build artifacts & binaries (never commit built clients/apps) ----------
+build/
+dist/
+out/
+.gradle/
+*.apk
+*.aab
+*.ipa
+*.dex
+*.so
+*.dll
+*.dylib
+
+# --- OS / editor noise -----------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+.idea/
+.vscode/
+
+# --- explicit keeps (MUST stay after every ignore rule above) --------------
+# Examples, test fixtures and the studio list are source, not secrets.
+# Negations only work because no parent directory rule excludes them.
+!**/.env.example
+!*.env.example
+!**/config.example.json
+!**/*.example.json
+!**/fixtures/**
+!studios.json

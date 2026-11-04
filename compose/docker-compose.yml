@@ -1,0 +1,323 @@
+# Dubs media stack — core services.
+#
+# All HTTP ports are bound to ${BIND_IP} (default 127.0.0.1): the panel and
+# operators reach them via loopback, and a reverse proxy publishes them.
+# Only Transmission's peer port is published publicly by default (required
+# for BitTorrent connectivity); override PEER_BIND_IP to change that.
+#
+# Usage:
+#   cd compose && docker compose up -d
+#   # Intel/AMD iGPU transcoding (opt-in):
+#   docker compose -f docker-compose.yml -f docker.igpu.yml up -d
+#   # Jackett + FlareSolverr (opt-in):
+#   docker compose --profile extras up -d
+#
+# Required variables are enforced with ${VAR:?...} so the stack fails closed
+# at config time instead of silently mounting wrong paths. Copy .env.example
+# to .env and fill it in first.
+#
+# Every host bind uses the long syntax with create_host_path: false: if the
+# storage layout is missing (unmounted disk, typo), the container FAILS
+# instead of Docker silently creating empty fallback directories on a wrong
+# filesystem. The storage directories themselves are created by the explicit
+# verified `install --create-storage` step, never by Docker at boot.
+
+name: dubs
+
+networks:
+  dubs:
+
+x-lsio-env: &lsio-env
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+  TZ: ${TZ:-Europe/Moscow}
+
+x-labels: &dubs-labels
+  com.dubs.stack: dubs
+
+services:
+  # One-shot fail-closed guard: media services start only if the persistent
+  # storage is armed (see storage-sentinel.sh). Never disabled silently.
+  storage-sentinel:
+    image: ${SENTINEL_IMAGE:-busybox:1.36}
+    container_name: dubs-storage-sentinel
+    restart: "no"
+    command: ["/bin/sh", "/scripts/storage-sentinel.sh"]
+    volumes:
+      - type: bind
+        source: ./storage-sentinel.sh
+        target: /scripts/storage-sentinel.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?Set MEDIA_ROOT to the absolute path of persistent media storage in compose/.env}
+        target: /storage
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: storage-sentinel
+
+  jellyfin:
+    image: ${JELLYFIN_IMAGE:-jellyfin/jellyfin:latest}
+    container_name: dubs-jellyfin
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?Set DUBS_DATA_ROOT to an absolute path for service configs in compose/.env}/jellyfin
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/jellyfin-cache
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/shows
+        target: /media/shows
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/movies
+        target: /media/movies
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/music
+        target: /media/music
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8096:8096"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: jellyfin
+
+  seerr:
+    # Official Seerr image (Overseerr/Jellyseerr merger), docs.seerr.dev.
+    # Runs as UID/GID 1000 -> the config dir must be writable by PUID/PGID.
+    image: ${SEERR_IMAGE:-ghcr.io/seerr-team/seerr:latest}
+    container_name: dubs-seerr
+    user: "${PUID:-1000}:${PGID:-1000}"
+    init: true
+    security_opt:
+      - no-new-privileges
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/seerr
+        target: /app/config
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:5055:5055"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: seerr
+
+  sonarr:
+    image: ${SONARR_IMAGE:-lscr.io/linuxserver/sonarr:latest}
+    container_name: dubs-sonarr
+    environment: *lsio-env
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/sonarr
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/torrents
+        target: /torrents
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/shows
+        target: /tv
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8989:8989"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: sonarr
+
+  radarr:
+    image: ${RADARR_IMAGE:-lscr.io/linuxserver/radarr:latest}
+    container_name: dubs-radarr
+    environment: *lsio-env
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/radarr
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/torrents
+        target: /torrents
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/movies
+        target: /movies
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:7878:7878"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: radarr
+
+  lidarr:
+    image: ${LIDARR_IMAGE:-lscr.io/linuxserver/lidarr:latest}
+    container_name: dubs-lidarr
+    environment: *lsio-env
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/lidarr
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/torrents
+        target: /torrents
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/music
+        target: /music
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8686:8686"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: lidarr
+
+  transmission:
+    image: ${TRANSMISSION_IMAGE:-lscr.io/linuxserver/transmission:latest}
+    container_name: dubs-transmission
+    environment:
+      <<: *lsio-env
+      # RPC/web-UI credentials; the installer generates them into compose/.env
+      # (never printed). If your image version ignores these vars, set
+      # rpc-username/rpc-password once in the container's /config/settings.json.
+      TRANSMISSION_USER: ${TRANSMISSION_USER:-}
+      TRANSMISSION_PASS: ${TRANSMISSION_PASS:-}
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/transmission
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MEDIA_ROOT:?}/torrents
+        target: /downloads
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9091:9091"
+      # BitTorrent peer traffic: must be reachable from outside for incoming
+      # peers. Restrict to your LAN by setting PEER_BIND_IP if needed.
+      - "${PEER_BIND_IP:-0.0.0.0}:51413:51413"
+      - "${PEER_BIND_IP:-0.0.0.0}:51413:51413/udp"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: transmission
+
+  prowlarr:
+    image: ${PROWLARR_IMAGE:-lscr.io/linuxserver/prowlarr:latest}
+    container_name: dubs-prowlarr
+    environment: *lsio-env
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/prowlarr
+        target: /config
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9696:9696"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: prowlarr
+
+  jackett:
+    image: ${JACKETT_IMAGE:-lscr.io/linuxserver/jackett:latest}
+    container_name: dubs-jackett
+    environment: *lsio-env
+    volumes:
+      - type: bind
+        source: ${DUBS_DATA_ROOT:?}/jackett
+        target: /config
+        bind:
+          create_host_path: false
+    ports:
+      - "${BIND_IP:-127.0.0.1}:9117:9117"
+    depends_on:
+      storage-sentinel:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [dubs]
+    profiles: [extras]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: jackett
+
+  flaresolverr:
+    image: ${FLARESOLVERR_IMAGE:-flaresolverr/flaresolverr:latest}
+    container_name: dubs-flaresolverr
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      LOG_LEVEL: ${FLARESOLVERR_LOG_LEVEL:-info}
+    ports:
+      - "${BIND_IP:-127.0.0.1}:8191:8191"
+    restart: unless-stopped
+    networks: [dubs]
+    profiles: [extras]
+    labels:
+      <<: *dubs-labels
+      com.dubs.service: flaresolverr

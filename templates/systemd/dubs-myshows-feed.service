@@ -1,0 +1,38 @@
+# MyShows watchlist feed: serves the Sonarr Custom List on loopback (+private
+# docker bridge gateways via a drop-in) and refreshes it hourly; downloads
+# posters into the covers cache. Never downloads media, never touches the
+# torrent or shows trees, never the docker socket. Binds are validated by
+# installer/deployment.py (wildcard binds are a ConfigError) and installer/
+# installer/cli.py only ever adds private bridge gateway addresses.
+# systemctl enable dubs-myshows-feed
+
+[Unit]
+Description=Dubs MyShows watchlist feed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Backend uid: reads the MyShows login from config.json and the Sonarr key
+# (shared group) and writes feed state + covers; no media access.
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+SupplementaryGroups=@SHARED_GROUP@
+Environment=DUBS_SRC=@REPO@/src
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=SERIES_CONTROL_FEED_STATE=@FEED_STATE@
+Environment=SERIES_CONTROL_COVERS=@COVERS@
+Environment=DUBS_FEED_PORT=9191
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/automations/myshows_feed.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=@FEED_STATE@ @COVERS@
+ReadOnlyPaths=@CONFIG_ROOT@
+
+[Install]
+WantedBy=multi-user.target

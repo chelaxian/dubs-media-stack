@@ -1,0 +1,47 @@
+# Dubs panel — cleanup worker role (watched-file cleanup loop).
+# Cleanup stays disabled unless cleanup_enable=true in config.json AND the
+# storage sentinel is armed (runtime.storage_ready refuses otherwise).
+# This is the ONLY role allowed to write media directories — and only the
+# torrent storage: library deletes go through the Sonarr API, so the shows
+# tree is read-only here. Runs on its own backend uid (primary private
+# backend group, which owns backend-only service credentials); the compose
+# PGID media group is a SUPPLEMENTARY group for torrent access only.
+# systemctl enable dubs-worker@main
+
+[Unit]
+Description=Dubs cleanup worker role (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+# Shared status group (read web-owned preferences/myshows-auth, write public
+# job/snapshot/history output for the web role) + compose PGID media group
+# (torrent storage). Nothing else — in particular never docker.
+SupplementaryGroups=@SHARED_GROUP@ @MEDIA_GROUP@
+Environment=SERIES_CONTROL_ROLE=worker
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=SERIES_CONTROL_STATE_ROOT=@STATE_ROOT@
+Environment=SERIES_CONTROL_WORKER_ROOT=@WORKER_ROOT@
+Environment=SERIES_CONTROL_UI_DIR=@REPO@/src
+Environment=SERIES_CONTROL_STUDIOS=@STUDIOS@
+Environment=SERIES_CONTROL_FEED_STATE=@FEED_STATE@
+Environment=SERIES_CONTROL_COVERS=@COVERS@
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/src/control.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Torrent storage is the only writable media path; own worker state is the
+# only other write target. The shows tree is read-only (verified with
+# fingerprints before a delete is dispatched via the Sonarr API).
+ReadWritePaths=@WORKER_ROOT@ -@TORRENT_HOST@
+ReadOnlyPaths=@STATE_ROOT@ @CONFIG_ROOT@ @FEED_STATE@ -@SHOWS_HOST@
+
+[Install]
+WantedBy=multi-user.target

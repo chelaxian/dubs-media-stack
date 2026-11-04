@@ -1,0 +1,29 @@
+# One-shot: sync configured Jackett indexers into Prowlarr as Torznab entries.
+# Runs on the backend uid (private backend group owns the jackett/prowlarr
+# credentials); lock/state under the private worker root; no media paths.
+# systemctl enable dubs-jackett-sync.timer
+
+[Unit]
+Description=Dubs Jackett to Prowlarr indexer sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@WORKER_USER@
+Group=@BACKEND_GROUP@
+SupplementaryGroups=@SHARED_GROUP@
+Environment=DUBS_SRC=@REPO@/src
+Environment=SERIES_CONTROL_CONFIG_ROOT=@CONFIG_ROOT@
+Environment=DUBS_AUTOMATION_STATE=@WORKER_ROOT@/automations
+Environment=PYTHONPATH=@REPO@/src
+ExecStart=@PYTHON@ @REPO@/automations/jackett_prowlarr_sync.py
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=@WORKER_ROOT@
+ReadOnlyPaths=@CONFIG_ROOT@
+
+[Install]
+WantedBy=multi-user.target
