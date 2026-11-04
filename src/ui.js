@@ -893,7 +893,7 @@ async function openPlayer(event, e) {
 const EVENT_TYPES = ["download_started", "torrent_complete", "library_ready", "new_episode", "upgrade_started", "upgrade_result"];
 const EVENT_LABELS = { download_started: "Начало загрузки", torrent_complete: "Раздача скачана", library_ready: "Появилось в медиатеке", new_episode: "Новая серия", upgrade_started: "Ежедневная проверка замены", upgrade_result: "Результат замены" };
 const NATIVE_APP = /DubsNative|DubsTV/.test(navigator.userAgent);
-let eventsSettings = null, eventsPolling = false, journalBefore = null, journalLoading = false;
+let eventsSettings = null, eventsSaving = false, eventsPolling = false, journalBefore = null, journalLoading = false;
 function storeGet(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -911,18 +911,18 @@ function syncEventsControls(s) {
   const master = $("events-account-enabled");
   if (!master) return;
   const types = Array.isArray(s == null ? void 0 : s.types) ? s.types : [];
-  master.disabled = false;
+  master.disabled = eventsSaving;
   master.setAttribute("aria-checked", String((s == null ? void 0 : s.enabled) === true));
   for (const t of EVENT_TYPES) {
     const sw = document.querySelector('[data-event-type="' + t + '"]');
     if (sw) {
-      sw.disabled = false;
+      sw.disabled = eventsSaving;
       sw.setAttribute("aria-checked", String(types.includes(t)));
     }
   }
   const titles = $("events-show-titles");
   if (titles) {
-    titles.disabled = false;
+    titles.disabled = eventsSaving;
     titles.setAttribute("aria-checked", String((s == null ? void 0 : s.showTitles) === true));
   }
 }
@@ -938,6 +938,9 @@ async function loadEventsSettings() {
   }
 }
 async function postEventsSettings() {
+  if (eventsSaving) return;
+  eventsSaving = true;
+  for (const sw of document.querySelectorAll("#events-account-enabled, #events-types .preference-switch")) sw.disabled = true;
   const types = EVENT_TYPES.filter((t) => {
     const sw = document.querySelector('[data-event-type="' + t + '"]');
     return sw && sw.getAttribute("aria-checked") === "true";
@@ -949,6 +952,9 @@ async function postEventsSettings() {
     show_titles: $("events-show-titles").getAttribute("aria-checked") === "true" ? "true" : "false"
   });
   try {
+    const session = await json("/api/session");
+    csrf = session.csrf;
+    body.set("csrf", csrf);
     const d = await json("/api/notifications/settings", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body });
     eventsSettings = d;
     syncEventsControls(d);
@@ -956,6 +962,9 @@ async function postEventsSettings() {
   } catch (e) {
     toast(e.message);
     await loadEventsSettings();
+  } finally {
+    eventsSaving = false;
+    if (eventsSettings) syncEventsControls(eventsSettings);
   }
 }
 for (const sw of document.querySelectorAll("#events-account-enabled, #events-types .preference-switch")) {

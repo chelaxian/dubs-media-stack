@@ -1,0 +1,251 @@
+name: mobile clients
+
+# Dispatch-only: parent dispatches from the private repo with production
+# overrides. Without inputs/secrets everything falls back to repository
+# defaults (app.dubs.panel etc.) and unsigned debug artifacts — CI here can
+# never publish, tag or release anything. All outputs are artifacts only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      phone_application_id:
+        description: Phone applicationId (build var, default = repo generic)
+        required: false
+        default: ''
+      phone_version_code:
+        description: Phone versionCode
+        required: false
+        default: '13'
+      phone_version_name:
+        description: Phone versionName
+        required: false
+        default: 1.3.0
+      tv_application_id:
+        description: TV applicationId (build var, default = repo generic)
+        required: false
+        default: ''
+      tv_version_code:
+        description: TV versionCode
+        required: false
+        default: '8'
+      tv_version_name:
+        description: TV versionName
+        required: false
+        default: 1.5.0-tv
+      ios_bundle_id:
+        description: iOS bundle identifier (build var, default = repo generic)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify shared panel with actual template
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dubs-browser" playwright
+          export NODE_PATH="$RUNNER_TEMP/dubs-browser/node_modules"
+          node --check src/ui.js
+          python3 -m unittest discover -s tests -p test_clients_notifications.py
+          node mobile/tests/media-details-toggle.cjs
+          node mobile/tests/events-journal.cjs
+          node mobile/tests/panel-ui-smoke.cjs
+          node mobile/tests/panel-search.cjs
+          node mobile/tests/panel-card-actions.cjs
+          node mobile/tests/tv-remote.cjs
+          node mobile/tests/tv-csp.cjs
+          node mobile/tests/tv-settings-navigation.cjs
+
+  android-tests:
+    name: Android ${{ matrix.api-level }} instrumented (4GB emulator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 28   # Android 9, the minimum supported WebView
+            target: default
+          - api-level: 36   # Android 16, current runtime-notification rules
+            target: google_apis
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.2'
+
+      - name: Static checks (panel script syntax, mobile python compile)
+        run: |
+          node --check src/ui.js
+          python3 -m compileall -q mobile
+
+      - name: Plain JVM policy tests (no device)
+        run: |
+          cd mobile
+          javac -d /tmp/out-sa tests/ServerAddressTest.java android/app/src/main/java/app/dubs/panel/ServerAddress.java
+          java -cp /tmp/out-sa ServerAddressTest
+          javac -d /tmp/out-np tests/NotificationPolicyTest.java
+          cd ..
+          java -cp /tmp/out-np NotificationPolicyTest
+
+      - name: Instrumented tests on API ${{ matrix.api-level }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          ram-size: 4096M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: mobile/android
+          script: gradle :app:connectedDebugAndroidTest
+
+  android-release:
+    name: Android signed release artifacts
+    runs-on: ubuntu-latest
+    needs: [browser, android-tests]
+    timeout-minutes: 30
+    env:
+      DUBS_KEYSTORE_B64: ${{ secrets.DUBS_KEYSTORE_B64 }}
+      DUBS_SIGNING_PASSWORD: ${{ secrets.DUBS_SIGNING_PASSWORD }}
+      DUBS_KEY_ALIAS: ${{ secrets.DUBS_KEY_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.2'
+
+      - name: Build signed release APKs (secrets from the private repo)
+        if: ${{ env.DUBS_KEYSTORE_B64 != '' }}
+        env:
+          DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name }}
+          DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name }}
+          DUBS_KEYSTORE: /tmp/dubs-signing.p12
+        run: |
+          printf '%s' "$DUBS_KEYSTORE_B64" | base64 -d > /tmp/dubs-signing.p12
+          cd mobile/android
+          gradle :app:lint :tv:lint :app:assembleRelease :tv:assembleRelease
+          rm -f /tmp/dubs-signing.p12
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f /tmp/dubs-signing.p12
+
+      - name: Build debug APKs (no signing secrets — sanity artifact only)
+        if: ${{ env.DUBS_KEYSTORE_B64 == '' }}
+        env:
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name }}
+        run: |
+          cd mobile/android
+          gradle :app:lint :tv:lint :app:assembleDebug :tv:assembleDebug
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: |
+            mobile/android/app/build/outputs/apk/**/*.apk
+            mobile/android/tv/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS simulator tests (minimum iOS 17) + unsigned payload
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate project with production bundle id override
+        working-directory: mobile/ios
+        env:
+          DUBS_IOS_BUNDLE_ID: ${{ inputs.ios_bundle_id || vars.DUBS_IOS_BUNDLE_ID || 'app.dubs.panel' }}
+        run: |
+          brew install xcodegen
+          if [ "$DUBS_IOS_BUNDLE_ID" != "app.dubs.panel" ]; then
+            sed -i.bak "s|PRODUCT_BUNDLE_IDENTIFIER: app.dubs.panel$|PRODUCT_BUNDLE_IDENTIFIER: $DUBS_IOS_BUNDLE_ID|" project.yml
+            rm -f project.yml.bak
+          fi
+          xcodegen generate
+
+      - name: Choose an available iPhone simulator (iOS 17 or newer)
+        run: |
+          xcrun simctl list devices available -j > /tmp/dubs-simulators.json
+          python3 - <<'PYSIM'
+          import json, os, re
+          from pathlib import Path
+          choices = []
+          for runtime, devices in json.loads(Path('/tmp/dubs-simulators.json').read_text())['devices'].items():
+              match = re.search(r'iOS-(\d+)-(\d+)', runtime)
+              if match and int(match[1]) >= 17:
+                  for device in devices:
+                      if device['name'].startswith('iPhone') and device.get('isAvailable'):
+                          choices.append(((int(match[1]), int(match[2])), device['udid'], runtime, device['name']))
+          if not choices:
+              raise SystemExit('No available iPhone simulator with iOS >=17; install a simulator runtime')
+          _, identifier, runtime, name = max(choices)
+          print('Selected simulator:', runtime, name)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('DUBS_IOS_SIMULATOR_ID=' + identifier + '\n')
+          PYSIM
+
+      - name: Run UI and notification state tests on selected simulator
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -project Dubs.xcodeproj -scheme Dubs \
+            -destination "platform=iOS Simulator,id=$DUBS_IOS_SIMULATOR_ID" \
+            -derivedDataPath build/test CODE_SIGNING_ALLOWED=NO test \
+            | tee xcodebuild-test.log
+
+      - name: Build unsigned Release payload (parent signs for TrollStore)
+        working-directory: mobile/ios
+        run: |
+          xcodebuild -project Dubs.xcodeproj -scheme Dubs \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath build/release CODE_SIGNING_ALLOWED=NO build
+          python3 - <<'PYENT'
+          import plistlib
+          from pathlib import Path
+          info = plistlib.loads(Path('build/release/Build/Products/Release-iphoneos/Dubs.app/Info.plist').read_bytes())
+          bundle = info['CFBundleIdentifier']
+          Path('trollstore-entitlements.plist').write_bytes(plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
+          PYENT
+          mkdir Payload
+          cp -R build/release/Build/Products/Release-iphoneos/Dubs.app Payload/
+          zip -qry dubs-ios-payload-unsigned.zip Payload
+
+      - name: Upload iOS artifacts and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-artifacts
+          path: |
+            mobile/ios/dubs-ios-payload-unsigned.zip
+            mobile/ios/xcodebuild-test.log
+            mobile/ios/trollstore-entitlements.plist
+          if-no-files-found: error

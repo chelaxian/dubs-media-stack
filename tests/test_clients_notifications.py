@@ -219,7 +219,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("connectedDebugAndroidTest", self.wf)
 
     def test_ios_simulator_and_unsigned_payload(self):
-        self.assertIn("OS=17.5", self.wf)
+        self.assertIn("DUBS_IOS_SIMULATOR_ID", self.wf)
+        self.assertIn("int(match[1]) >= 17", self.wf)
         self.assertIn("xcodegen generate", self.wf)
         self.assertIn("CODE_SIGNING_ALLOWED=NO build", self.wf)
 

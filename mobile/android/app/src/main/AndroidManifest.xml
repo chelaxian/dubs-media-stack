@@ -1,7 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+ <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
  <queries><package android:name="dev.jdtech.jellyfin.dubs.tv"/><package android:name="nl.jknaapen.fladder"/><package android:name="com.fredrikburmester.streamyfin"/><package android:name="dev.jdtech.jellyfin"/><package android:name="dev.jdtech.jellyfin.dubs"/><package android:name="org.jellyfin.mobile"/><intent><action android:name="android.intent.action.VIEW"/><data android:scheme="jellyfin"/></intent></queries>
  <application android:theme="@style/AppTheme" android:label="Dubs" android:icon="@drawable/ic_dubs" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
-  <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+  <activity android:name="app.dubs.panel.MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+  <service android:name="app.dubs.panel.NotificationSyncJob" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE"/>
  </application>
 </manifest>

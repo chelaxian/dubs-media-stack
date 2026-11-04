@@ -1,9 +1,30 @@
 plugins { id 'com.android.application' }
+// Production overrides come from build environment in the private parent repo
+// (DUBS_APPLICATION_ID, DUBS_PHONE_VERSION_CODE, DUBS_PHONE_VERSION_NAME);
+// repository defaults stay generic. Overriding applicationId must not move the
+// source activity class: manifests reference app.dubs.panel.MainActivity fully.
+def envOr = { String key, String fallback ->
+ def value = System.getenv(key)
+ (value != null && !value.trim().isEmpty()) ? value.trim() : fallback
+}
 android {
  namespace 'app.dubs.panel'
  compileSdk 36
- defaultConfig { applicationId 'app.dubs.panel'; minSdk 28; targetSdk 36; versionCode 12; versionName '1.2.0' }
- signingConfigs { release { storeFile file(System.getenv('DUBS_KEYSTORE') ?: '/tmp/dubs-signing.p12'); storePassword System.getenv('DUBS_SIGNING_PASSWORD'); keyAlias 'dubs'; keyPassword System.getenv('DUBS_SIGNING_PASSWORD'); storeType 'PKCS12' } }
+ buildToolsVersion '36.0.0'
+ defaultConfig {
+  applicationId = envOr('DUBS_APPLICATION_ID', 'app.dubs.panel')
+  minSdk = 28
+  targetSdk = 36
+  versionCode = envOr('DUBS_PHONE_VERSION_CODE', '13').toInteger()
+  versionName = envOr('DUBS_PHONE_VERSION_NAME', '1.3.0')
+  testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
+ }
+
+ signingConfigs { release { storeFile file(System.getenv('DUBS_KEYSTORE') ?: '/tmp/dubs-signing.p12'); storePassword (System.getenv('DUBS_SIGNING_PASSWORD') ?: ''); keyAlias = envOr('DUBS_KEY_ALIAS', 'dubs'); keyPassword (System.getenv('DUBS_SIGNING_PASSWORD') ?: ''); storeType 'PKCS12' } }
  buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {
+ androidTestImplementation 'androidx.test:core:1.6.1'
+ androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }
