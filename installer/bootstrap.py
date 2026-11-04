@@ -127,19 +127,23 @@ class Arr:
         - upgradeAllowed False: only the panel's daily Pareto-safe pass upgrades.
         """
         schema = self.quality_schema()
-        cutoff = 0
-        for item in schema.get('items') or []:
+        definitions = {d['quality']['id']: d['quality']
+                       for d in self.call('qualitydefinition') or []}
+
+        def select(item):
             q = item.get('quality')
             if q:
-                res = _resolution(q.get('name', ''))
-                item['allowed'] = res in allowed_resolutions
+                item['allowed'] = quality_resolution(q, definitions) in allowed_resolutions
             else:
-                res = {_resolution((leaf.get('quality') or {}).get('name', ''))
-                       for leaf in item.get('items') or []}
-                res.discard(0)
-                item['allowed'] = res <= allowed_resolutions and bool(res)
-            if item['allowed']:
-                cutoff = q['id'] if q else item['id']
+                children = item.get('items') or []
+                selected = [select(child) for child in children]
+                item['allowed'] = bool(selected) and all(selected)
+            return item['allowed']
+
+        cutoff = 0
+        for item in schema.get('items') or []:
+            if select(item):
+                cutoff = item['quality']['id'] if item.get('quality') else item['id']
         if not cutoff:
             raise ArrError('quality schema has no qualities in %s' % (allowed_resolutions,))
         formats = self.call('customformat') or []
@@ -370,6 +374,16 @@ class Arr:
             self.call('qualityprofile/%d' % profile['id'], 'PUT', updated)
             refreshed.append(profile['name'])
         return refreshed
+
+
+def quality_resolution(quality, definitions):
+    """Resolve API quality IDs via qualitydefinition; unknown/raw fail closed."""
+    known = definitions.get(quality.get('id')) or {}
+    if (not known.get('id') or known.get('source') == 'televisionRaw'
+            or known.get('modifier') in ('rawhd', 'brdisk')
+            or known.get('name', '').casefold() in ('raw-hd', 'br-disk')):
+        return 0
+    return known.get('resolution', 0)
 
 
 def _resolution(quality_name):

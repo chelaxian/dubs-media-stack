@@ -223,6 +223,24 @@ def feed_server(stack, gateway):
     return srv, 'http://%s:%d' % (gateway, srv.server_port)
 
 
+def profile_resolutions(profile, definitions):
+    """Read selected top-level items; an allowed group enables ALL its leaves."""
+    from installer.bootstrap import quality_resolution
+
+    def leaves(item):
+        if item.get('quality'):
+            yield quality_resolution(item['quality'], definitions)
+        else:
+            children = item.get('items') or []
+            if not children:
+                raise AssertionError('allowed quality group has no leaves')
+            for child in children:
+                yield from leaves(child)
+
+    return [resolution for item in profile.get('items') or [] if item.get('allowed')
+            for resolution in leaves(item)]
+
+
 if SMOKE:
 
     class IntegrationSmoke(unittest.TestCase):
@@ -318,15 +336,6 @@ if SMOKE:
             return {f.get('name'): f.get('value') for f in entry.get('fields') or []}
 
         @classmethod
-        def profile_resolutions(cls, profile, acc=None):
-            acc = [] if acc is None else acc
-            for item in profile.get('items') or []:
-                if item.get('quality'):
-                    acc.append(item['quality'].get('resolution'))
-                cls.profile_resolutions(item, acc)
-            return acc
-
-        @classmethod
         def format_scores(cls, profile):
             return {fi['name']: fi.get('score') for fi in profile.get('formatItems') or []}
 
@@ -344,14 +353,17 @@ if SMOKE:
             for name in ('Dubs RU 2160p', 'Dubs RU 1080p'):
                 self.assertIn(name, profiles)
                 self.assertEqual(profiles[name]['id'], report['profiles'][name])
-            resolutions = sorted(set(self.profile_resolutions(profiles['Dubs RU 2160p'])))
+            definitions = {d['quality']['id']: d['quality']
+                           for d in sonarr.call('qualitydefinition')}
+            resolutions = sorted(set(profile_resolutions(
+                profiles['Dubs RU 2160p'], definitions)))
             self.assertIn(1080, resolutions)
             self.assertIn(2160, resolutions)
             for r in resolutions:
                 self.assertIn(r, (1080, 2160),
                               'profile allows foreign resolution %s' % r)
             resolutions1080 = sorted(set(
-                self.profile_resolutions(profiles['Dubs RU 1080p'])))
+                profile_resolutions(profiles['Dubs RU 1080p'], definitions)))
             self.assertEqual(resolutions1080, [1080])
             scores = self.format_scores(profiles['Dubs RU 2160p'])
             self.assertEqual(scores[self.veto], -10000000)  # hard RU veto
@@ -449,6 +461,7 @@ if SMOKE:
             s = self.requests.Session()
             s.auth = (self.stack.transmission_user, self.stack.transmission_pass)
             r1 = s.post(url, json={}, timeout=10)
+            self.assertEqual(r1.status_code, 409)
             session = r1.headers.get('X-Transmission-Session-Id')
             self.assertTrue(session, 'no session id issued (409 handshake)')
             r2 = s.post(url, json={'method': 'session-get'}, timeout=10,
@@ -456,7 +469,8 @@ if SMOKE:
             self.assertEqual(r2.status_code, 200)
             self.assertEqual(r2.json()['result'], 'success')
             bad = self.requests.post(url, json={}, timeout=10,
-                                     auth=(self.stack.transmission_user, 'wrong'))
+                                     auth=(self.stack.transmission_user, 'wrong'),
+                                     headers={'X-Transmission-Session-Id': session})
             self.assertEqual(bad.status_code, 401)
 
         def test_05_second_bootstrap_is_idempotent(self):

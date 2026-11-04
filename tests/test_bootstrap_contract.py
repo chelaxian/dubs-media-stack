@@ -56,6 +56,16 @@ class FakeStack:
         }
         self.state = {app: {} for app in BASES}
         self.calls = []  # (app, method, path, data)
+        # Captured quality objects carry the same Quality resource shape as
+        # GET qualitydefinition (id is the QUALITY id, not definition row id).
+        def leaves(item):
+            if item.get('quality'):
+                yield item['quality']
+            for child in item.get('items') or []:
+                yield from leaves(child)
+        for app in ('sonarr', 'radarr'):
+            for quality in leaves(f[app]['qualityprofile']):
+                self.add(app, 'qualitydefinition', {'quality': quality})
         # Fresh-install seeds: Lidarr/Prowlarr ship default objects.
         self.add('lidarr', 'qualityprofile', {'name': 'Any'})
         self.add('lidarr', 'metadataprofile', {'name': 'Standard'})
@@ -258,6 +268,31 @@ class BootstrapContractTests(unittest.TestCase):
                     report2 = run_bootstrap(stack, feed_url=base + '/')
                 self.assertEqual(report2['import_list'], report['import_list'])
                 self.assertEqual(len(stack.posted('sonarr', 'importlist')), 1)
+
+    def test_quality_definitions_override_profile_names_and_missing_resolution(self):
+        stack = FakeStack()
+        schema = stack.schemas['sonarr']['qualityprofile/schema']
+        schema['items'] = [
+            {'quality': {'id': 3, 'name': 'misleading-720p'}, 'allowed': False},
+            {'quality': {'id': 999, 'name': 'invented-2160p'}, 'allowed': True},
+            {'id': 1234, 'items': [
+                {'quality': {'id': 3, 'name': 'WEBDL-1080p'}},
+                {'quality': {'id': 0, 'name': 'Unknown'}}], 'allowed': True},
+            {'quality': {'id': 10, 'name': 'Raw-HD'}, 'allowed': True},
+        ]
+        run_bootstrap(stack)
+        profile = next(p for p in stack.objects('sonarr', 'qualityprofile')
+                       if p['name'] == 'Dubs RU 2160p')
+        self.assertEqual([i['allowed'] for i in profile['items']],
+                         [True, False, False, False])
+        self.assertEqual(profile['cutoff'], 3)
+
+    def test_quality_profile_fails_closed_without_quality_definitions(self):
+        stack = FakeStack()
+        stack.state['sonarr']['qualitydefinition'] = []
+        with self.assertRaisesRegex(bs.ArrError, 'no qualities'):
+            run_bootstrap(stack)
+        self.assertFalse(stack.posted('sonarr', 'qualityprofile'))
 
     # 2. Radarr: same 14-studio base family + identical scores --------------
 
@@ -625,6 +660,57 @@ class TransmissionValidationTests(unittest.TestCase):
                 arr.ensure_transmission_client('Dubs Transmission', 'tvCategory',
                     'tvDirectory', 'dubs-tv', '/downloads/complete/tv')
             call.assert_not_called()
+
+
+class SmokeQualityAuthContractTests(unittest.TestCase):
+    def test_selected_groups_check_every_leaf_using_definition_quality_ids(self):
+        from integration_smoke import profile_resolutions
+        definitions = {3: {'id': 3, 'name': 'WEBDL-1080p', 'resolution': 1080},
+                       0: {'id': 0, 'name': 'Unknown', 'resolution': 0},
+                       10: {'id': 10, 'name': 'Raw-HD', 'resolution': 1080},
+                       4: {'id': 4, 'name': 'HDTV-720p', 'resolution': 720}}
+        profile = {'items': [
+            {'quality': {'id': 0}, 'allowed': False},
+            {'quality': {'id': 10}, 'allowed': False},
+            {'allowed': True, 'items': [
+                {'quality': {'id': 3}, 'allowed': False}]}]}
+        self.assertEqual(profile_resolutions(profile, definitions), [1080])
+        # Enabled Unknown, Raw-HD and unmapped IDs remain visible as failures,
+        # including foreign leaves within an enabled group.
+        for quality_id in (0, 10, 999):
+            profile['items'][-1]['items'].append({'quality': {'id': quality_id}})
+            self.assertIn(0, profile_resolutions(profile, definitions))
+            profile['items'][-1]['items'].pop()
+        profile['items'][-1]['items'].append({'quality': {'id': 4}})
+        self.assertIn(720, profile_resolutions(profile, definitions))
+
+    def test_transmission_bad_auth_requires_valid_csrf_and_401(self):
+        from test_smoke_entrypoint import load_flagged
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        cls = load_flagged().IntegrationSmoke
+        case = cls('test_04_transmission_daemon_accepts_generated_credentials')
+        case.stack = SimpleNamespace(transmission_user='test-user',
+                                     transmission_pass='test-password')
+        session = Mock()
+        session.post.side_effect = [
+            Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
+            Mock(status_code=200, json=lambda: {'result': 'success'})]
+        case.requests = Mock()
+        case.requests.Session.return_value = session
+        case.requests.post.return_value = Mock(status_code=401)
+        case.test_04_transmission_daemon_accepts_generated_credentials()
+        self.assertEqual(case.requests.post.call_args.kwargs['headers'],
+                         {'X-Transmission-Session-Id': 'valid-token'})
+        self.assertEqual(case.requests.post.call_args.kwargs['auth'],
+                         ('test-user', 'wrong'))
+        # A CSRF challenge is never accepted as proof of bad-auth rejection.
+        session.post.side_effect = [
+            Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
+            Mock(status_code=200, json=lambda: {'result': 'success'})]
+        case.requests.post.return_value = Mock(status_code=409)
+        with self.assertRaises(AssertionError):
+            case.test_04_transmission_daemon_accepts_generated_credentials()
 
 
 if __name__ == '__main__':
