@@ -1,11 +1,12 @@
 name: mobile clients
 
-# Dispatch-only: parent dispatches from the private repo with production
-# overrides. Without inputs/secrets everything falls back to repository
-# defaults (app.dubs.panel etc.) and unsigned debug artifacts — CI here can
-# never publish, tag or release anything. All outputs are artifacts only.
+# Same-repository PRs register and run this new workflow before it reaches
+# the default branch. Fork PRs get no jobs, signing secrets or artifacts.
+# This workflow only uploads artifacts; it cannot publish or merge.
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       phone_application_id:
@@ -42,10 +43,13 @@ permissions:
 
 jobs:
   browser:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -65,7 +69,15 @@ jobs:
           node mobile/tests/tv-settings-navigation.cjs
 
   android-tests:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: Android ${{ matrix.api-level }} instrumented (4GB emulator)
+    env:
+      DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
+      DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
+      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
+      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
+      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
+      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -78,6 +90,8 @@ jobs:
             target: google_apis
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
@@ -114,6 +128,7 @@ jobs:
           script: gradle :app:connectedDebugAndroidTest
 
   android-release:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: Android signed release artifacts
     runs-on: ubuntu-latest
     needs: [browser, android-tests]
@@ -124,6 +139,8 @@ jobs:
       DUBS_KEY_ALIAS: ${{ secrets.DUBS_KEY_ALIAS }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@v4
         with:
@@ -138,11 +155,11 @@ jobs:
         if: ${{ env.DUBS_KEYSTORE_B64 != '' }}
         env:
           DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
           DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
           DUBS_KEYSTORE: /tmp/dubs-signing.p12
         run: |
           printf '%s' "$DUBS_KEYSTORE_B64" | base64 -d > /tmp/dubs-signing.p12
@@ -157,10 +174,10 @@ jobs:
       - name: Build debug APKs (no signing secrets — sanity artifact only)
         if: ${{ env.DUBS_KEYSTORE_B64 == '' }}
         env:
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '13' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.0' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '8' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.0-tv' }}
         run: |
           cd mobile/android
           gradle :app:lint :tv:lint :app:assembleDebug :tv:assembleDebug
@@ -175,11 +192,14 @@ jobs:
           if-no-files-found: error
 
   ios:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     name: iOS simulator tests (minimum iOS 17) + unsigned payload
     runs-on: macos-15
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Generate project with production bundle id override
         working-directory: mobile/ios

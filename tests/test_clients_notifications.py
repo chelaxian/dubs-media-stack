@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def read(*parts):
-    return (ROOT / Path(*(item for part in parts for item in (part if isinstance(part, (list, tuple)) else [part])))).read_text(encoding="utf-8")
+    return (ROOT / Path(*parts)).read_text(encoding="utf-8")
 
 
 ANDROID = "mobile/android/app/src/main/java/app/dubs/panel"
@@ -205,12 +205,28 @@ class WorkflowTest(unittest.TestCase):
     def setUp(self):
         self.wf = read(".github/workflows/mobile-release.yml")
 
-    def test_dispatch_only_readonly_and_artifact_outputs(self):
+    def test_trusted_pr_dispatch_readonly_and_artifact_outputs(self):
         self.assertIn("workflow_dispatch:", self.wf)
         self.assertIn("permissions:", self.wf)
         self.assertIn("contents: read", self.wf)
         self.assertNotRegex(self.wf, r"gh release|tags:|releases/")
         self.assertIn("upload-artifact", self.wf)
+
+    def test_fork_prs_cannot_start_jobs_or_access_signing_artifacts(self):
+        self.assertIn("pull_request:", self.wf)
+        self.assertIn("synchronize", self.wf)
+        self.assertNotIn("pull_request_target", self.wf)
+        guard = "if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository"
+        # All four jobs, including signing and artifact-producing iOS, are gated.
+        self.assertEqual(self.wf.count(guard), 4)
+        self.assertEqual(self.wf.count("persist-credentials: false"), 4)
+
+    def test_pr_versions_and_production_id_overrides_have_explicit_fallbacks(self):
+        for field, default in (("phone_version_code", "13"), ("phone_version_name", "1.3.0"),
+                               ("tv_version_code", "8"), ("tv_version_name", "1.5.0-tv")):
+            self.assertIn("inputs.%s || '%s'" % (field, default), self.wf)
+        for name in ("DUBS_ANDROID_APPLICATION_ID", "DUBS_TV_APPLICATION_ID", "DUBS_IOS_BUNDLE_ID"):
+            self.assertIn("vars." + name, self.wf)
 
     def test_emulator_matrix_and_ram(self):
         self.assertIn("api-level: 28", self.wf)
@@ -242,33 +258,25 @@ class SecretScanSafetyTest(unittest.TestCase):
         r"AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
     PATHS = (
-        ("src", "ui.js"), ("src", "style.css"), ("src", "render.py"),
-        ("mobile", "android", "app", "src", "main", "AndroidManifest.xml"),
-        (TV_MANIFEST.split("/")),
-        (ANDROID.split("/"), "MainActivity.java"),
-        (ANDROID.split("/"), "NotificationSync.java"),
-        (ANDROID.split("/"), "NotificationSyncJob.java"),
-        (ANDROID.split("/"), "EventStore.java"),
-        ("mobile", "android", "app", "build.gradle"),
-        ("mobile", "android", "tv", "build.gradle"),
-        ("mobile", "ios", "Dubs", "main.m"),
-        ("mobile", "ios", "Dubs", "Info.plist"),
-        ("mobile", "ios", "Dubs", "Dubs.entitlements"),
-        ("mobile", "ios", "project.yml"),
-        ("mobile", "ios", "DubsUITests", "NotificationStateTests.m"),
-        ("mobile", "tests", "NotificationPolicyTest.java"),
-        ("mobile", "tests", "media-details-toggle.cjs"),
-        (".github", "workflows", "mobile-release.yml"),
-        ("docs", "mobile.md"),
+        "src/ui.js", "src/style.css", "src/render.py",
+        "mobile/android/app/src/main/AndroidManifest.xml", TV_MANIFEST,
+        *(ANDROID + "/" + name for name in ("MainActivity.java", "NotificationSync.java", "NotificationSyncJob.java", "EventStore.java")),
+        "mobile/android/app/src/androidTest/java/app/dubs/panel/NotificationsInstrumentedTest.java",
+        "mobile/android/app/build.gradle", "mobile/android/tv/build.gradle", "mobile/android/gradle.properties",
+        "mobile/ios/Dubs/main.m", "mobile/ios/Dubs/Info.plist", "mobile/ios/Dubs/Dubs.entitlements",
+        "mobile/ios/project.yml", "mobile/ios/DubsUITests/NotificationStateTests.m",
+        "mobile/ios/DubsTests/NotificationCoreTests.m", "mobile/tests/NotificationPolicyTest.java",
+        "mobile/tests/media-details-toggle.cjs", "mobile/tests/events-journal.cjs", "mobile/tests/render-fixture.py",
+        ".github/workflows/mobile-release.yml", "docs/mobile.md",
     )
 
     def test_owned_files_pass_secret_scan(self):
         hits = []
         for path in self.PATHS:
-            text = read(*path)
+            text = read(path)
             for i, line in enumerate(text.splitlines(), 1):
                 if self.BAD.search(line) and not self.ALLOW.search(line):
-                    hits.append("%s:%d" % ("/".join(str(p) for p in path), i))
+                    hits.append("%s:%d" % (path, i))
         self.assertEqual(hits, [], "secret-scan hits: %s" % hits)
 
 

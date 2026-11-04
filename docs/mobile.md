@@ -145,8 +145,11 @@ applicationId/bundle ID и прежнюю подпись; менять их дл
 Сервер переносится из старых настроек `MainActivity`, WebView сохраняет
 существующую авторизацию. Смена сервера по-прежнему требует входа.
 
-Workflow `.github/workflows/mobile-release.yml` запускается вручную и
-выдаёт только артефакты. Его inputs имеют приоритет над repository variables
+Workflow `.github/workflows/mobile-release.yml` запускается вручную и при
+открытии/обновлении PR из того же репозитория; выдаёт только артефакты.
+Все jobs исключены для fork PR: подпись, secrets и артефакты им недоступны.
+Разрешения workflow — только `contents: read`; `pull_request_target` не используется.
+Для PR без inputs явно сохраняются версии телефона 13/1.3.0 и TV 8/1.5.0-tv. Его inputs имеют приоритет над repository variables
 `DUBS_ANDROID_APPLICATION_ID`, `DUBS_TV_APPLICATION_ID`, `DUBS_IOS_BUNDLE_ID`.
 Телефонная Gradle-переменная `DUBS_APPLICATION_ID` получает значение первой
 из этих repository variables. Для подписи используются только secrets
