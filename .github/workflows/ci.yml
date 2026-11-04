@@ -53,6 +53,15 @@ jobs:
               r'(?<![\d.])192\.168\.\d+\.\d+|'
               r'(?<![\d.])172\.1[6-9]\.(?!18\.0\.1)\d+\.\d+|'
               r'AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
+          # Synthetic Docker-gateway fixtures from the unit suite. Stripped
+          # ONLY on lines of tests/test_install_security.py, so any other
+          # secret sharing those lines is still scanned.
+          fixture_file = 'tests/test_install_security.py'
+          # Assembled from fragments so this heredoc itself never contains
+          # a literal fixture IP (the scan covers this file too).
+          fixture_ips = ('172.18.' + '0.1',
+                         '172.19.' + '0.1',
+                         '192.168.' + '5.1')
           hits = []
           for p in Path('.').rglob('*'):
               if not p.is_file() or skip_dirs & set(p.parts):
@@ -61,7 +70,11 @@ jobs:
                   text = p.read_text(errors='replace')
               except (OSError, ValueError):
                   continue
+              strip_fixture_ips = p.as_posix() == fixture_file
               for i, line in enumerate(text.splitlines(), 1):
+                  if strip_fixture_ips:
+                      for ip in fixture_ips:
+                          line = line.replace(ip, '')
                   if bad.search(line) and not allow.search(line):
                       hits.append('%s:%d: %s' % (p, i, line.strip()[:120]))
           if hits:
