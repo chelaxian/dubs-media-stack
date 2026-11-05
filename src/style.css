@@ -183,3 +183,9 @@ html.dubs-native-ios.dubs-settings-only main{padding-top:0}
 html.dubs-native-ios.dubs-settings-only::before{display:none}
 html.dubs-native-ios.dubs-settings-only .toolbar{top:0}
 .native-client-panel>a,.native-client-panel>button{display:block;width:100%;box-sizing:border-box;text-align:left;padding:12px;margin-top:10px;border-radius:10px}
+@media(min-width:701px){
+ html.dubs-tv .episode-card{--action-columns:minmax(0,1fr) 100px 112px var(--action-circle)}
+ html.dubs-tv .episode-card>.card-actions>.watch-button,html.dubs-tv .episode-line>.episode-actions>.watch-button{width:44px;height:44px;min-width:44px;max-width:44px;min-height:44px!important;max-height:44px}
+ html.dubs-tv .episode-line>.episode-actions>.media-badge{padding-left:8px;padding-right:8px}
+ .episode-card>.card-actions>button:nth-child(2){padding-left:6px;padding-right:6px}
+}
