@@ -4,7 +4,7 @@ const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '../..');
 const html = execFileSync('python3', [path.join(__dirname, 'render-fixture.py')], {encoding:'utf8'});
 (async () => {
-  const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || '/opt/google/chrome/chrome', args:['--no-sandbox']});
+  const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || '/opt/google/chrome/chrome', args:['--no-sandbox','--disable-gpu']});
   const page = await browser.newPage({viewport:{width:1920,height:1080},hasTouch:true});
   page.setDefaultTimeout(8000);
   const errors = [];
