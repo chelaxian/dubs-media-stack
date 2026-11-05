@@ -84,7 +84,7 @@ const html = execFileSync('python3', [path.join(__dirname, 'render-fixture.py')]
       assert(b.y>actions.y+35,'details below buttons');
       assert(b.x>=0 && b.x+b.width<=width,'details within viewport');
       if(width===1920) assert(b.width<=480,'desktop details bounded to 480px');
-      if(width===390) assert(Math.abs(b.width-(await page.locator('.episode-line').boundingBox()).width)<2,'mobile details full row width');
+      if(width===390) assert(Math.abs(b.width-((await page.locator('.episode-line').boundingBox()).width-14))<2,'mobile details full row width');
     }
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no overflow '+width);
     await page.screenshot({path:width===1920?'/tmp/dubs-layout-desktop.png':'/tmp/dubs-layout-mobile.png',fullPage:true});

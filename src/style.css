@@ -141,3 +141,10 @@ html.dubs-native-ios .toolbar{top:44px}
  html:not(.dubs-tv) .episode-actions.is-not-ordered>.watch-button{grid-column:2;grid-row:2;justify-self:end}
 }
 .schedule-form{display:grid;gap:14px}.schedule-form label{display:grid;gap:7px}.schedule-form input{max-width:100%;box-sizing:border-box}
+/* Reserve the same chevron gutter on every episode row as on show headers. */
+.episode-line,.upcoming-line{padding-right:30px}
+@media(max-width:700px){html:not(.dubs-tv) .episode-line,html:not(.dubs-tv) .upcoming-line{padding-right:14px}}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{grid-template-columns:minmax(0,1fr) 50px}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.episode-primary{grid-column:1/-1;margin-right:40px}
+}

@@ -23,6 +23,8 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   for(const width of [320,375,390,430]){
    await page.setViewportSize({width,height:844});
    await page.locator('.episode-show').first().evaluate(n=>n.open=true);
+   const edge=await page.locator('.episode-card').first().evaluate(n=>({header:n.querySelector('.card-actions').getBoundingClientRect().right,episodes:[...n.querySelectorAll('.episode-line>.episode-actions')].map(x=>x.getBoundingClientRect().right)}));
+   for(const right of edge.episodes)assert(Math.abs(right-edge.header)<1,'matching show/episode right gutter');
    const pending=await page.locator('.is-not-ordered').first().evaluate(n=>{const b=x=>x.getBoundingClientRect().toJSON();return{box:b(n),download:b(n.querySelector('.episode-primary')),find:b(n.querySelector('.episode-find')),watch:b(n.querySelector('.watch-button'))}});
    assert(Math.abs(pending.box.width-pending.download.width)<1,'pending download full width');
    assert(Math.abs(pending.find.y-pending.watch.y)<1,'find and check same row');
@@ -82,7 +84,7 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   await desktop.setViewportSize({width,height:900});
   const row=await desktop.locator('.upcoming-line').evaluate(n=>{const r=s=>n.querySelector(s).getBoundingClientRect().toJSON();return {row:n.getBoundingClientRect().toJSON(),poster:r('.cover'),text:n.children[2].getBoundingClientRect().toJSON(),actions:r('.episode-actions')};});
   assert(row.actions.top<row.poster.bottom&&row.actions.bottom>row.poster.top,'desktop upcoming one track '+width);
-  assert(Math.abs(row.actions.right-row.row.right)<2,'desktop upcoming actions at right edge '+width);
+  assert(Math.abs(row.actions.right-(row.row.right-30))<2,'desktop upcoming actions at right edge '+width);
   assert(row.text.right<=row.actions.left,'desktop upcoming copy/action collision '+width);
   await desktop.screenshot({path:'/tmp/dubs-desktop-upcoming-'+width+'.png'});
  }
