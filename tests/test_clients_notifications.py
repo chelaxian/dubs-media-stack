@@ -153,7 +153,7 @@ class AndroidNativeTest(unittest.TestCase):
         device = read("mobile/android/app/src/androidTest/java/app/dubs/panel/NotificationsInstrumentedTest.java")
         self.assertIn('android.permission.POST_NOTIFICATIONS', device)
         self.assertIn('POST_NOTIFICATION \"+(allowed?"allow":"ignore")', device)
-        self.assertIn('assertFalse(NotificationSync.notificationsAllowed(context))', device)
+        self.assertRegex(device, r'assertFalse\("product reports active after OS denial: "\+diagnostics,NotificationSync\.notificationsAllowed\(context\)\)')
 
     def test_local_delivery_only(self):
         ios = read("mobile/ios/Dubs/main.m")

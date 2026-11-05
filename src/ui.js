@@ -455,7 +455,7 @@ function taskControls(e, actions) {
   const task = currentTask(e);
   if (!task || ["done", "cancelled"].includes(task.state)) return null;
   const box = node("span", void 0, "download-task");
-  const cancel = node("button", "Отменить", "quiet");
+  const cancel = node("button", "Отменить", "quiet order-outline");
   cancel.type = "button";
   cancel.addEventListener("click", async () => {
     cancel.disabled = true;
@@ -529,7 +529,7 @@ function bulkButton(group) {
   });
   const cancelling = active.length > 0;
   const complete = !cancelling && !remaining.length;
-  const button = node("button", bulkBusy.has(group.seriesId) ? "Отправляем…" : cancelling ? "Отменить" : complete ? "Всё заказано" : "Скачать всё", "bulk-download" + (complete ? " is-complete" : ""));
+  const button = node("button", bulkBusy.has(group.seriesId) ? "Отправляем…" : cancelling ? "Отменить" : complete ? "Всё заказано" : "Скачать всё", "bulk-download" + (complete ? " is-complete order-outline" : cancelling ? " order-outline" : ""));
   button.type = "button";
   button.disabled = complete || bulkBusy.has(group.seriesId);
   button.title = cancelling ? "Отменить все активные заказы этого сериала" : "Заказать все вышедшие непросмотренные серии этого сериала";
@@ -1224,3 +1224,106 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) pollEvents();
 });
 pollEvents();
+
+// Global policy is saved explicitly; only worker-confirmed order is applied.
+const studioForm = $("studio-order-form");
+if (studioForm) {
+  const list = $("studio-order-list"), status = $("studio-order-status"), save = $("studio-order-save");
+  let dirty = false, saving = false, dragged = null;
+  const names = () => Array.from(list.children, li => li.dataset.studio);
+  function feedback(state, message) {
+    status.dataset.state = state;
+    if (status.textContent !== message) status.textContent = message;
+  }
+  function boundaries() {
+    Array.from(list.children).forEach((li, i) => {
+      li.querySelector('[data-move="-1"]').disabled = saving || i === 0;
+      li.querySelector('[data-move="1"]').disabled = saving || i === list.children.length - 1;
+    });
+  }
+  function changed() {
+    dirty = true;
+    feedback("unsaved", "Порядок изменён. Нажмите «Сохранить порядок»");
+    boundaries();
+  }
+  list.addEventListener("click", ev => {
+    const button = ev.target.closest("button[data-move]");
+    if (!button || saving) return;
+    const li = button.closest("li"), direction = Number(button.dataset.move);
+    const sibling = direction < 0 ? li.previousElementSibling : li.nextElementSibling;
+    if (!sibling) return;
+    if (direction < 0) list.insertBefore(li, sibling); else list.insertBefore(sibling, li);
+    changed();
+    (button.disabled ? li.querySelector('[data-move="' + (-direction) + '"]') : button).focus();
+  });
+  list.addEventListener("dragstart", ev => {
+    if (saving) { ev.preventDefault(); return; }
+    dragged = ev.target.closest("li");
+    if (dragged && ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", dragged.dataset.studio);
+    }
+  });
+  list.addEventListener("dragover", ev => { if (dragged && !saving) ev.preventDefault(); });
+  list.addEventListener("drop", ev => {
+    ev.preventDefault();
+    const target = ev.target.closest("li");
+    if (!dragged || !target || target === dragged || saving) return;
+    const rect = target.getBoundingClientRect();
+    list.insertBefore(dragged, ev.clientY > rect.top + rect.height / 2 ? target.nextElementSibling : target);
+    dragged = null;
+    changed();
+  });
+  list.addEventListener("dragend", () => { dragged = null; });
+  function display(result) {
+    if (!result || !Array.isArray(result.order)) return;
+    if (!dirty) {
+      if (JSON.stringify(names()) !== JSON.stringify(result.order)) {
+        const focus = list.contains(document.activeElement) ? document.activeElement : null;
+        for (const name of result.order) {
+          const li = Array.from(list.children).find(n => n.dataset.studio === name);
+          if (li) list.appendChild(li);
+        }
+        if (focus) focus.focus({preventScroll:true});
+      }
+      feedback(result.state, result.message);
+      boundaries();
+    }
+    if (Array.isArray(result.effectiveOrder)) {
+      const configNode = $("media-badge-config");
+      if (configNode) {
+        const config = JSON.parse(configNode.dataset.config);
+        config.studios = result.effectiveOrder;
+        configNode.dataset.config = JSON.stringify(config);
+      }
+    }
+  }
+  studioForm.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    if (saving) return;
+    saving = true; save.disabled = true; boundaries();
+    feedback("pending", "Сохраняем порядок…");
+    try {
+      const session = await json("/api/session");
+      const result = await json("/api/studio-order", {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:new URLSearchParams({csrf:session.csrf, order:JSON.stringify(names())})});
+      dirty = false;
+      display(result);
+    } catch (error) {
+      feedback("error", error.message + ". Порядок не подтверждён. Повторите сохранение");
+    } finally {
+      saving = false; save.disabled = false; boundaries();
+    }
+  });
+  let polling = false;
+  async function pollOrder() {
+    if (polling || saving || document.hidden || (typeof tab !== "undefined" && tab !== "settings")) return;
+    polling = true;
+    try { display(await json("/api/studio-order")); }
+    catch (error) { if (!dirty) feedback("error", error.message + ". Не удалось проверить применение"); }
+    finally { polling = false; }
+  }
+  boundaries();
+  setInterval(pollOrder, 5000);
+  window.addEventListener("hashchange", pollOrder);
+  pollOrder();
+}

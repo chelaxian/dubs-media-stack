@@ -1,6 +1,7 @@
 """Daily, non-destructive upgrades of downloaded, MyShows-unwatched episodes."""
 import datetime,re,secrets,time,logging
 from zoneinfo import ZoneInfo
+import studio_order
 import runtime as rt
 import notifications
 
@@ -16,13 +17,13 @@ def due(state,now=None):
 
 def voice_rank(m,sid,title,formats=()):
  prefs=m.load('preferences.json',{}).get(str(sid),{})
- order=list(range(len(m.STUDIOS)))
+ order=studio_order.indices(m.STUDIOS)
  selected=rt.resolve_studio(m.STUDIOS,prefs.get('studio'))
  if selected is not None:order.remove(selected);order.insert(0,selected)
  names={x.get('name','').split(' — ',1)[-1] for x in formats}
- hits=[i for i in order if i!=len(m.STUDIOS)-1 and re.search(m.STUDIOS[i]['pattern'],title) or m.STUDIOS[i]['name'] in names]
+ other=next(i for i,s in enumerate(m.STUDIOS) if s['name']==studio_order.CATCHALL)
+ hits=[i for i in order if (i!=other and re.search(m.STUDIOS[i]['pattern'],title)) or m.STUDIOS[i]['name'] in names]
  # The 'other Russian' studio can itself be a selected first choice.
- other=len(m.STUDIOS)-1
  if not hits:hits=[other]
  if prefs.get('mode')=='strict' and selected is not None and selected not in hits:return None
  return min(order.index(i) for i in hits)

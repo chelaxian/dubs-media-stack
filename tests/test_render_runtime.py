@@ -45,7 +45,7 @@ class RenderRuntime(unittest.TestCase):
     page=ui.render(m,'c'*43)
    for name in [names[1],names[3],names[4]]:self.assertIn('href="/apps/'+name+'"',page)
    for name in [names[0],names[2]]:self.assertNotIn('href="/apps/'+name+'"',page)
-   order=['events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel']
+   order=['studio-order-panel','events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel']
    positions=[page.index('id="'+name+'"') for name in order]
    self.assertEqual(positions,sorted(positions))
    self.assertEqual(page.count('action="/myshows-login"'),1)

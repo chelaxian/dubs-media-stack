@@ -15,15 +15,17 @@ const html=execFileSync('python3',[path.join(__dirname,'render-fixture.py')],{en
  });
  await page.goto('https://settings.test/#settings');
  await page.locator('#events-panel').waitFor();
- const order=['events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel'];
+ const order=['studio-order-panel','events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel'];
  assert.deepEqual(await page.locator('#settings .panel').evaluateAll(ns=>ns.map(n=>n.id)),order);
- const bounds=()=>page.locator('#settings .panel').evaluateAll(ns=>Object.fromEntries(ns.map(n=>{const r=n.getBoundingClientRect();return[n.id,{x:r.x,y:r.y,bottom:r.bottom,width:r.width}]})));
+ const bounds=()=>page.locator('#settings .panel').evaluateAll(ns=>Object.fromEntries(ns.map(n=>{const r=n.getBoundingClientRect();return[n.id,{x:r.x,y:r.y,bottom:r.bottom,width:r.width,height:r.height}]})));
  for(const width of [1440,900,720]){
   await page.setViewportSize({width,height:1100});
   const b=await bounds();
   assert(b['events-panel'].x<b['appearance-panel'].x);
-  assert.equal(b['events-panel'].y,b['appearance-panel'].y);
-  for(const ids of [order.slice(0,3),order.slice(3)])for(let i=1;i<ids.length;i++)assert(Math.abs(b[ids[i]].y-b[ids[i-1]].bottom-16)<1,'independent panel gap');
+  assert.equal(b['studio-order-panel'].y,b['appearance-panel'].y);
+  assert(b['studio-order-panel'].height>b['download-panel'].height,'primary editor is tall left, help compact right');
+  assert.equal(await page.locator('.settings-large>#studio-order-panel').count(),1);
+  for(const ids of [order.slice(0,4),order.slice(4)])for(let i=1;i<ids.length;i++)assert(Math.abs(b[ids[i]].y-b[ids[i-1]].bottom-16)<1,'independent panel gap');
   // Expanding a tall panel must not move the short stack.
   const before=b['player-panel'].y;
   await page.locator('#account-panel details').first().evaluate(n=>n.open=!n.open);

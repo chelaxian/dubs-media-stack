@@ -22,6 +22,9 @@ const html = execFileSync('python3', [path.join(__dirname, 'render-fixture.py')]
     }
     if (url.pathname === '/api/session') return route.fulfill({json:{csrf:'x'.repeat(43)}});
     if (url.pathname.startsWith('/api/notifications/')) return route.fulfill({json:{enabled:false,types:[],events:[],devices:[],cursor:0,hasMore:false}});
+    if (url.pathname === '/api/studio-order' && route.request().method() === 'GET') {
+      return route.fulfill({json:{order:[],effectiveOrder:[],state:'applied',message:'Применено'}});
+    }
     if (url.pathname === '/api/action') {
       actions.push(Object.fromEntries(new URLSearchParams(route.request().postData())));
       return rejectAction ? route.fulfill({status:503,json:{message:'Повторите попытку позже'}}) : route.fulfill({json:{job:'a'.repeat(32)}});

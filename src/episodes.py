@@ -4,6 +4,7 @@ from pathlib import Path
 import requests
 import sys
 import jellyfin_links
+import studio_order
 import runtime as rt
 import upgrades
 import notifications
@@ -251,7 +252,7 @@ def normalize(m,row,profile,source,expected=None):
  title=row.get('title','');scores={x['format']:x['score'] for x in profile.get('formatItems',[])};cfs=row.get('customFormats',[]);score=sum(scores.get(x['id'],0) for x in cfs)
  q=row.get('quality',{});qinfo=q.get('quality',{})
  veto=any(x.get('name')==rt.settings()['veto_format'] for x in cfs)
- voices=[x['name'] for x in m.STUDIOS[:-1] if re.search(x['pattern'],title)]
+ voices=[m.STUDIOS[i]['name'] for i in studio_order.indices(m.STUDIOS) if m.STUDIOS[i]['name']!=studio_order.CATCHALL and re.search(m.STUDIOS[i]['pattern'],title)]
  reasons=list(row.get('rejections',[]))
  # Prowlarr results are parsed locally by Sonarr to apply the exact same rules.
  if source=='prowlarr':
@@ -782,9 +783,11 @@ def run(m):
  for path in (m.STATE/'requests').glob('*.json'):
   status=m.WORKER_STATE/'jobs'/path.name
   if read(status,{}).get('state') in ('queued','running'):status.unlink(missing_ok=True)
- active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0
+ active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0
  while True:
   now=time.time()
+  if now-last_order>=30:
+   studio_order.reconcile(m);last_order=now
   for key,future in list(active.items()):
    if future.done():
     try:future.result()

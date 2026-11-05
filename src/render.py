@@ -1,5 +1,6 @@
 import datetime,html,json
 from pathlib import Path
+import studio_order
 import runtime as rt
 def e(s):return html.escape(str(s),quote=True)
 def icon(name):
@@ -17,11 +18,12 @@ def render(m,csrf):
  for sid,p in prefs.items():
   idx=rt.resolve_studio(m.STUDIOS,p.get('studio'))
   if idx is not None:badge_prefs[str(sid)]=m.STUDIOS[idx]['name']
- badge_config={'studios':[x['name'] for x in m.STUDIOS],'preferred':badge_prefs}
+ badge_config={'studios':studio_order.effective(m.STUDIOS),'preferred':badge_prefs}
  body+='<div id="media-badge-config" hidden data-config="'+e(json.dumps(badge_config,ensure_ascii=False))+'"></div>'
  for index,entry in enumerate(entries):
   sr=entry['series'];sid=sr['id'];p=prefs.get(str(sid),{});choice=p.get('studio');idx=rt.resolve_studio(m.STUDIOS,choice);voice=m.STUDIOS[idx]['name'] if idx is not None else 'Общий приоритет озвучек';options='<option value="-1">По умолчанию</option>'
-  for i,x in enumerate(m.STUDIOS):options+=f'<option value="{i}"'+(' selected' if idx==i else '')+'>'+e(x['name'])+'</option>'
+  for i in studio_order.indices(m.STUDIOS):
+   x=m.STUDIOS[i];options+=f'<option value="{i}"'+(' selected' if idx==i else '')+'>'+e(x['name'])+'</option>'
   modes=''.join('<option value="'+v+'"'+(' selected' if p.get('mode','fallback')==v else '')+'>'+n+'</option>' for v,n in [('fallback','С запасными озвучками'),('strict','Только выбранная озвучка')]);strict=choice is not None and p.get('mode')=='strict';mode='<span class="mode'+('' if strict else ' soft')+'">'+('ТОЛЬКО ЭТА' if strict else 'С ЗАПАСНЫМИ')+'</span>' if choice is not None else '';live=sr.get('status') in ('continuing','upcoming');year=sr.get('year') or '';search=(entry['title']+' '+sr['title']).casefold()
   image_loading='fetchpriority="high"' if index==0 else 'loading="lazy"'
   body+=f'<details class="show" id="show-{sid}" data-search="{e(search)}"><summary><img class="cover" src="/cover/{sid}.jpg" alt="" width="156" height="91" {image_loading} decoding="async"><div class="show-copy"><strong class="show-title">{e(entry["title"])}</strong><div class="show-meta">{e(year)} · {e(sr["title"])}</div><div class="show-voice">'+icon('voice')+e(voice)+mode+'</div></div><div class="show-end"><span class="air'+(' live' if live else '')+'">'+('ON AIR' if live else 'ENDED')+'</span><span class="chevron" aria-hidden="true"></span></div></summary><div class="editor"><form class="preference-form" method="post" action="/preference">'+token+f'<input type="hidden" name="series" value="{sid}"><label>Предпочитаемая озвучка<select name="studio">{options}</select></label><label>Если озвучка ещё не вышла<select name="mode">{modes}</select></label><button>Сохранить</button></form><p class="hint">Только эта озвучка — ждём выбранную студию. С запасными — разрешаем другие по общему приоритету. Качество сравнивается первым.</p></div></details>'
@@ -44,5 +46,11 @@ def render(m,csrf):
   server=rt.settings()['jellyfin_url']
   if server:apps+='<p>Для перехода «В медиатеке» настройте Swiftfin на iOS или Findroid на Android. Сервер: '+e(server)+'.</p>'
   apps+='</div>'
- body+='<section class="settings" id="settings">'+head+'<div class="settings-column settings-large">'+events+account+apps+'</div><div class="settings-column settings-short">'+appearance+player+cleanup+download+'</div>'
+ order=studio_order.view(m.STUDIOS)
+ editor='<form id="studio-order-form" method="post" action="/api/studio-order"><h3>Общий приоритет озвучек</h3><p>Для всех сериалов по умолчанию. Выше — предпочтительнее. Личный выбор сериала сохраняет приоритет. Переставьте строки или используйте кнопки.</p>'+token+'<ol id="studio-order-list" aria-label="Приоритет студий">'
+ for name in order['order']:
+  editor+='<li draggable="true" data-studio="'+e(name)+'"><span>'+e(name)+'</span><button type="button" class="quiet" data-move="-1" aria-label="Вверх: '+e(name)+'">↑</button><button type="button" class="quiet" data-move="1" aria-label="Вниз: '+e(name)+'">↓</button></li>'
+ editor+='</ol><button type="submit" id="studio-order-save" class="quiet">Сохранить порядок</button><p id="studio-order-status" role="status" aria-live="polite" data-state="'+e(order['state'])+'">'+e(order['message'])+'</p></form>'
+ editor='<div class="panel" id="studio-order-panel">'+editor+'</div>'
+ body+='<section class="settings" id="settings">'+head+'<div class="settings-column settings-large">'+editor+events+account+apps+'</div><div class="settings-column settings-short">'+appearance+player+cleanup+download+'</div>'
  body+='</section><p class="footer-note">MYSHOWS × SONARR · ВАША МЕДИАТЕКА, ВАШИ ПРАВИЛА</p><nav class="bottom-nav" aria-label="Навигация"><a class="active" data-tab="voice" href="#voice">'+icon('voice')+'<span>Озвучка</span></a><a data-tab="released" href="#released">'+icon('list')+'<span>Вышло</span></a><a data-tab="upcoming" href="#upcoming">'+icon('calendar')+'<span>Будет</span></a><a data-tab="settings" href="#settings">'+icon('settings')+'<span>Настройки</span></a></nav>';return body

@@ -52,3 +52,9 @@ html.dubs-tv .watch-button,html.dubs-tv .episode-card>.card-actions .watch-butto
 @media(min-width:701px){.episode-line{grid-template-columns:50px minmax(0,1fr) minmax(0,480px)}#events-panel{grid-column:1/-1}#events-panel .events-types{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.episode-line>.episode-actions{grid-column:1/-1}.episode-line{grid-template-columns:50px minmax(0,1fr)}}
 html.dubs-tv .episode-actions .download-ring{min-height:44px}
+/* Cancellation and completed orders retain a readable gray surface. */
+button.order-outline,.episode-card>.bulk-download.order-outline,.episode-card>.bulk-download.is-complete{background:#252528;color:#f5f5f7;border:1px solid var(--red);opacity:1}
+button.order-outline:hover,.episode-card>.bulk-download.order-outline:hover{background:#333338}
+button.order-outline:disabled{background:#252528;color:#ddd;border-color:var(--red);cursor:default}
+#studio-order-form{margin-top:0}#studio-order-list{padding-left:26px;margin:16px 0}#studio-order-list li{padding:7px 0;min-height:58px;border-bottom:1px solid #303033}#studio-order-list li::marker{color:#aaa;font-size:13px}#studio-order-list li>span{display:inline-block;width:calc(100% - 116px);vertical-align:middle;overflow-wrap:anywhere;padding-right:8px;font-size:14px}#studio-order-list button{min-width:44px;min-height:44px;padding:8px;margin-left:4px}#studio-order-list li[draggable=true]{cursor:grab}#studio-order-status[data-state=error]{color:#ff999e}#studio-order-status[data-state=applied]{color:#8fdcae}#studio-order-status[data-state=pending],#studio-order-status[data-state=unsaved]{color:#e2b25c}
+@media(max-width:400px){#studio-order-list{padding-left:20px}#studio-order-list li>span{font-size:12px;width:calc(100% - 104px)}#studio-order-list button{margin-left:1px}}

@@ -8,6 +8,15 @@ import runtime
 
 
 class MobileArtifacts(unittest.TestCase):
+ def test_real_dubs_tv_releases_keep_only_latest(self):
+  names=['Dubs-TV-1.0.apk','Dubs-TV-1.4.apk','Dubs-TV-1.5.1.apk','Dubs-1.4.apk','DubsTV-1.0.apk']
+  with tempfile.TemporaryDirectory() as directory:
+   for name in names:(Path(directory)/name).touch()
+   with patch.object(runtime,'settings',return_value={'mobile':{'dir':directory,'artifacts':[{'file':n} for n in names]}}):
+    self.assertEqual([x['file'] for x in runtime.mobile_artifacts()],names[2:])
+  self.assertIsNone(runtime._mobile_release('prefix-Dubs-TV-1.5.1.apk'))
+  self.assertIsNone(runtime._mobile_release('Dubs-TV-1.5.1.apk.bak'))
+
  def test_numeric_versions_platforms_variants_and_config_order(self):
   names = ['Dubs-1.9.apk', 'Dubs-1.10.apk', 'Dubs-1.9-TrollStore.ipa',
            'Dubs-1.10-TrollStore.ipa', 'DubsTV-1.2.apk', 'DubsTV-1.1.apk',

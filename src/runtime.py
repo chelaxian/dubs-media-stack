@@ -174,7 +174,7 @@ def panel_bind():
 
 # Anchored package names only: unknown configured families remain available.
 _MOBILE_PACKAGE = re.compile(
-    r'(?P<client>Dubs|DubsTV|Swiftfin|Findroid|FindroidTV|Findroid-Dubs|Findroid-Dubs-TV)-'
+    r'(?P<client>Dubs|Dubs-TV|DubsTV|Swiftfin|Findroid|FindroidTV|Findroid-Dubs|Findroid-Dubs-TV)-'
     r'(?P<version>[0-9]+(?:\.[0-9]+)+)(?P<variant>(?:-[A-Za-z0-9_]+)*)'
     r'(?P<platform>\.apk|\.ipa)\Z')
 
