@@ -25,6 +25,17 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
    assert(row.a.top<row.p.bottom&&row.a.bottom>row.p.top,'released same row '+width);
    assert(row.t.right<=row.a.left+1,'released text/actions overlap '+width);
    assert(row.a.right<=width,'released overflow '+width);
+   await page.locator('.episode-show').evaluate(n=>n.open=true);
+   const ready=await page.locator('.episode-line[data-episode-id="32"]').evaluate(n=>{
+    const rect=s=>n.querySelector(s).getBoundingClientRect().toJSON();
+    return {media:rect('.media-badge'),find:rect('.episode-find'),play:rect('.episode-primary'),watch:rect('.watch-button'),code:rect('.episode-number'),title:rect('.episode-title'),height:n.querySelector('.episode-actions').getBoundingClientRect().height};
+   });
+   assert(Math.abs(ready.media.top-ready.find.top)<2,'quality/find first row '+width);
+   assert(Math.abs(ready.play.top-ready.watch.top)<2,'library/watch second row '+width);
+   assert(ready.play.top>=ready.media.bottom,'second row below first '+width);
+   assert(ready.height<=72,'exactly two action rows '+width);
+   assert(ready.code.right<=ready.title.left,'episode code overlaps title '+width);
+   await page.screenshot({path:'/tmp/dubs-phone-released-'+(native?'native':'web')+'-'+width+'.png'});
    await page.evaluate(()=>location.hash='#upcoming');await page.waitForSelector('.upcoming-line');
    const future=await page.locator('.upcoming-line').first().evaluate(n=>{const p=n.querySelector('.cover').getBoundingClientRect(),a=n.querySelector('.episode-actions').getBoundingClientRect(),t=n.children[2].getBoundingClientRect();return {p:p.toJSON(),a:a.toJSON(),t:t.toJSON(),buttons:[...n.querySelectorAll('.episode-actions button')].map(b=>b.getBoundingClientRect().toJSON())};});
    assert(future.a.top<future.p.bottom&&future.a.bottom>future.p.top,'upcoming same row '+width);
@@ -45,5 +56,24 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   assert.equal(result.gesture,native);assert.equal(result.multi,native);assert.equal(result.single,false);
   assert.deepEqual(errors,[]);await page.close();
  }
+ const desktop=await browser.newPage({viewport:{width:1280,height:900}});
+ await desktop.route('https://desktop.test/**',route=>{
+  const u=new URL(route.request().url());
+  if(u.pathname==='/api/episodes')return route.fulfill({json:data});
+  if(u.pathname.startsWith('/api/'))return route.fulfill({json:{events:[],enabled:false,order:[],state:'applied'}});
+  if(['/style.css','/ui.js'].includes(u.pathname))return route.fulfill({body:fs.readFileSync(path.join(root,'src',u.pathname.slice(1)),'utf8'),contentType:u.pathname.endsWith('.css')?'text/css':'text/javascript'});
+  if(u.pathname.startsWith('/cover/'))return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="70"><rect width="100" height="70" fill="#632c38"/></svg>'});
+  return route.fulfill({body:html,contentType:'text/html'});
+ });
+ await desktop.goto('https://desktop.test/#upcoming');await desktop.waitForSelector('.upcoming-line');
+ for(const width of [768,1280,1920]){
+  await desktop.setViewportSize({width,height:900});
+  const row=await desktop.locator('.upcoming-line').evaluate(n=>{const r=s=>n.querySelector(s).getBoundingClientRect().toJSON();return {row:n.getBoundingClientRect().toJSON(),poster:r('.cover'),text:n.children[2].getBoundingClientRect().toJSON(),actions:r('.episode-actions')};});
+  assert(row.actions.top<row.poster.bottom&&row.actions.bottom>row.poster.top,'desktop upcoming one track '+width);
+  assert(Math.abs(row.actions.right-row.row.right)<2,'desktop upcoming actions at right edge '+width);
+  assert(row.text.right<=row.actions.left,'desktop upcoming copy/action collision '+width);
+  await desktop.screenshot({path:'/tmp/dubs-desktop-upcoming-'+width+'.png'});
+ }
+ await desktop.close();
  await browser.close();console.log('PASS phone cards 320–430: larger poster beside two action rows, no overlap/overflow, selected studio red, iOS controls reserve, native-only gesture lock with normal scrolling/browser zoom retained');
 })().catch(e=>{console.error(e);process.exit(1)});

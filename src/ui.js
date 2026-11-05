@@ -381,6 +381,7 @@ function controls(e, text) {
     return box;
   }
   const download = e.hasFile && e.jellyfinUrl ? node("a", "▶ В медиатеке", "library-link") : node("button", e.hasFile ? "▶ В медиатеке" : "Скачать", e.hasFile ? "library-link" : "");
+  download.classList.add("episode-primary");
   if (download.tagName === "A") {
     download.href = e.jellyfinUrl;
     download.target = "_blank";
@@ -392,10 +393,11 @@ function controls(e, text) {
     download.addEventListener("click", () => downloadEpisode(e, "", download));
     if (e.hasFile) download.title = "Jellyfin ещё не сопоставил эпизод. Обновите данные позже";
   }
-  const find = node("button", "Найти", "quiet");
+  const find = node("button", "Найти", "quiet episode-find");
   find.type = "button";
   find.disabled = !e.sonarrId;
   find.addEventListener("click", () => openSearch(e));
+  if (e.hasFile && media && !task) box.classList.add("is-library-ready");
   box.append(task || download);
   if (task && failed) box.append(download);
   if (media) box.append(media.toggle);
