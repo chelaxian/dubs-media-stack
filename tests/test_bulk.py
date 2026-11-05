@@ -42,3 +42,30 @@ class Bulk(unittest.TestCase):
   with patch.object(ep,'episode',side_effect=ep.UserError('not watching')):
    with self.assertRaises(ep.UserError):ep.submit_all(None,'5')
 if __name__=='__main__':unittest.main()
+
+class SeasonScope(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+  self.m=types.SimpleNamespace(STATE=Path(self.tmp.name)/'web',WORKER_STATE=Path(self.tmp.name)/'worker',LOCK=threading.RLock())
+  (self.m.STATE/'requests').mkdir(parents=True);(self.m.WORKER_STATE/'jobs').mkdir(parents=True)
+  self.items=[{'id':1,'season':2,'number':1},{'id':2,'season':2,'number':2},{'id':3,'season':3,'number':1},{'id':4,'season':3,'number':2,'hasFile':True},{'id':5,'season':2,'number':3,'future':True}]
+  self.view={'released':[{'seriesId':8,'episodes':self.items}],'actions':{'1':{'state':'running'},'2':{'state':'downloading'},'3':{'state':'running'}}}
+ def test_queue_and_cancel_do_not_cross_seasons(self):
+  with patch.object(ep,'episode',return_value={'seriesId':8,'season':2}),patch.object(ep,'snapshot',return_value=self.view):
+   result=ep.submit_all(self.m,'1',season_only=True)
+   self.assertEqual({x['episode'] for x in result['jobs']},{1,2})
+   result=ep.cancel_all(self.m,'1',season_only=True)
+   self.assertEqual({x['episode'] for x in result['jobs']},{1,2})
+ def test_watch_season_only(self):
+  calls=[]
+  def episode(m,id):return {'id':id,'season':2 if id in (1,2,5) else 3,'future':False}
+  with patch.object(ep,'episode',side_effect=episode),patch.object(ep,'released_group',return_value={'episodes':self.items}),patch.object(ep,'v3',side_effect=lambda m,op,args:calls.append(args['id'])),patch.object(ep,'refresh'),patch.object(ep,'report'):
+   ep.process(self.m,'a'*32,{'op':'watch_season','episode':1})
+  self.assertEqual(calls,[1,2])
+ def test_search_only_requested_season(self):
+  calls=[]
+  def episode(m,id):return {'id':id,'season':2 if id in (1,2,5) else 3,'number':id,'future':False}
+  def search(m,key,sample,publish):calls.append(sample);return [],[]
+  with patch.object(ep,'episode',side_effect=episode),patch.object(ep,'released_group',return_value={'episodes':self.items}),patch.object(ep,'search',side_effect=search),patch.object(ep,'report'):
+   ep.process(self.m,'a'*32,{'op':'search_season','episode':1})
+  self.assertEqual(len(calls),1);self.assertEqual(set(calls[0]['bulkIds']),{'1','2'});self.assertTrue(calls[0]['seasonSearch'])

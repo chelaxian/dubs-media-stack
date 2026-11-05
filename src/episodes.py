@@ -141,7 +141,7 @@ def episode(m,eid):
  return e
 
 def submit(m,op,eid,selection):
- if op not in ('refresh','watch','search','download','cancel','watch_all','search_all'):raise ValueError('Unknown operation')
+ if op not in ('refresh','watch','search','download','cancel','watch_all','search_all','watch_season','search_season'):raise ValueError('Unknown operation')
  if not re.fullmatch(r'[0-9]{1,10}',eid) or int(eid)<=0 and op!='refresh':raise ValueError('Invalid episode')
  if selection and not re.fullmatch(r'[0-9a-f]{32}:[0-9a-f]{20}',selection):raise ValueError('Invalid selection')
  queue=m.STATE/'requests';files=list(queue.glob('*.json'))
@@ -171,13 +171,13 @@ def selected_bulk_ids(m,selection,series_id):
  numbers=item['row'].get('episodeNumbers') or []
  return {eid for eid,number in scope['bulkIds'].items() if not numbers or number in numbers}
 
-def submit_all(m,anchor,selection=''):
+def submit_all(m,anchor,selection='',season_only=False):
  if not re.fullmatch(r'[1-9][0-9]{0,9}',anchor):raise ValueError('Invalid episode')
  e=episode(m,int(anchor))
  groups=snapshot(m).get('released',[])
  group=next((g for g in groups if g.get('seriesId')==e['seriesId']),None)
  if not group:raise UserError('Нет вышедших непросмотренных серий')
- eps=[x for x in group['episodes'] if not x.get('future') and not x.get('hasFile')]
+ eps=[x for x in group['episodes'] if not x.get('future') and not x.get('hasFile') and (not season_only or x.get('season')==e.get('season'))]
  if selection:
   allowed=selected_bulk_ids(m,selection,e['seriesId']);eps=[x for x in eps if str(x['id']) in allowed]
   if not eps:raise UserError('В этой раздаче нет нужных непросмотренных серий')
@@ -197,7 +197,7 @@ def submit_all(m,anchor,selection=''):
   if jobs:atomic(m.STATE/'requests'/(batch+'.ready'),{'count':len(jobs)})
  return {'jobs':jobs,'skipped':len(group['episodes'])-len(jobs)}
 
-def cancel_all(m,anchor):
+def cancel_all(m,anchor,season_only=False):
  if not re.fullmatch(r'[1-9][0-9]{0,9}',anchor):raise ValueError('Invalid episode')
  e=episode(m,int(anchor));view=snapshot(m)
  group=next((g for g in view.get('released',[]) if g['seriesId']==e['seriesId']),None)
@@ -205,6 +205,7 @@ def cancel_all(m,anchor):
  jobs=[]
  with m.LOCK:
   for item in group['episodes']:
+   if season_only and item.get('season')!=e.get('season'):continue
    task=view.get('actions',{}).get(str(item['id']),{})
    if task.get('state') not in ('queued','running','waiting','downloading','importing','paused'):continue
    key=secrets.token_hex(16);atomic(m.STATE/'requests'/(key+'.json'),{'op':'cancel','episode':item['id'],'selection':'','created':time.time()});jobs.append({'episode':item['id'],'job':key})
@@ -581,8 +582,8 @@ def process(m,key,job):
   if op=='cancel':cancel_episode(m,eid);report(m,key,'done','Заказ отменён; файлы не удалены');return
   e=episode(m,eid)
   if op=='download':check_cancelled(m,key,eid)
-  if op=='watch_all':
-   items=[x for x in released_group(m,eid)['episodes'] if not x.get('future')]
+  if op in ('watch_all','watch_season'):
+   items=[x for x in released_group(m,eid)['episodes'] if not x.get('future') and (op!='watch_season' or x.get('season')==e.get('season'))]
    completed=[]
    try:
     for item in items:
@@ -593,12 +594,12 @@ def process(m,key,job):
    except Exception:
     report(m,key,'error','Не все отметки переданы. Обновите список и повторите',watched=completed);return
    refresh(m,True);report(m,key,'done','Отмечены все вышедшие серии',watched=completed);return
-  if op=='search_all':
-   items=[x for x in released_group(m,eid)['episodes'] if not x.get('future')]
+  if op in ('search_all','search_season'):
+   items=[x for x in released_group(m,eid)['episodes'] if not x.get('future') and (op!='search_season' or x.get('season')==e.get('season'))]
    rows=[];errors=[]
    for season in sorted({x['season'] for x in items}):
     members=[x for x in items if x['season']==season];sample=dict(episode(m,members[0]['id']))
-    sample['seasonSearch']=True;sample['bulkIds']={str(x['id']):x['number'] for x in members}
+    sample['seasonSearch']=op=='search_season' or len(members)>1;sample['bulkIds']={str(x['id']):x['number'] for x in members}
     child=secrets.token_hex(16)
     def publish_bulk(found,warnings,progress):report(m,key,'running','Поиск сезона '+str(season),rows=rows+found,warnings=errors+warnings,search=progress)
     found,warnings=search(m,child,sample,publish_bulk)
@@ -809,7 +810,7 @@ def run(m):
    if not re.fullmatch(r'[0-9a-f]{32}',key) or key in active:continue
    if (m.WORKER_STATE/'jobs'/path.name).exists():continue
    job=read(path,{})
-   if set(job)-{'op','episode','selection','created','batch'} or not {'op','episode','selection','created'}<=set(job) or ('batch' in job and (not isinstance(job['batch'],str) or not re.fullmatch(r'[0-9a-f]{32}-[0-9]{1,3}',job['batch']) or job.get('op')!='download' or job.get('selection'))) or job['op'] not in ('refresh','watch','search','download','cancel','watch_all','search_all') or not isinstance(job['episode'],int) or not isinstance(job['selection'],str):report(m,key,'error','Некорректное задание');continue
+   if set(job)-{'op','episode','selection','created','batch'} or not {'op','episode','selection','created'}<=set(job) or ('batch' in job and (not isinstance(job['batch'],str) or not re.fullmatch(r'[0-9a-f]{32}-[0-9]{1,3}',job['batch']) or job.get('op')!='download' or job.get('selection'))) or job['op'] not in ('refresh','watch','search','download','cancel','watch_all','search_all','watch_season','search_season') or not isinstance(job['episode'],int) or not isinstance(job['selection'],str):report(m,key,'error','Некорректное задание');continue
    if job['selection'] and not re.fullmatch(r'[0-9a-f]{32}:[0-9a-f]{20}',job['selection']):report(m,key,'error','Некорректная раздача');continue
    if job.get('batch') and not (m.STATE/'requests'/(job['batch'].rsplit('-',1)[0]+'.ready')).exists() and now-job['created']<60:continue
    cached=read(m.WORKER_STATE/'myshows-episodes.json',{}).get('episodes',{}).get(str(job['episode']),{})

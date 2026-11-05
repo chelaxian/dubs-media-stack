@@ -535,6 +535,7 @@ async function downloadEpisode(e, selection, button) {
   }
 }
 function bulkButton(group) {
+  const scopeKey = group.scopeKey || String(group.seriesId);
   const active = group.episodes.filter((e) => {
     var _a2;
     return ["queued", "running", "waiting", "downloading", "importing", "paused", "cancelling"].includes((_a2 = currentTask(e)) == null ? void 0 : _a2.state);
@@ -545,21 +546,21 @@ function bulkButton(group) {
   });
   const cancelling = active.length > 0;
   const complete = !cancelling && !remaining.length;
-  const button = node("button", bulkBusy.has(group.seriesId) ? "Отправляем…" : cancelling ? "Отменить" : complete ? "Всё заказано" : "Скачать всё", "bulk-download" + (complete ? " is-complete order-outline" : cancelling ? " order-outline" : ""));
+  const button = node("button", bulkBusy.has(scopeKey) ? "Отправляем…" : cancelling ? "Отменить" : complete ? "Всё заказано" : "Скачать всё", "bulk-download" + (complete ? " is-complete order-outline" : cancelling ? " order-outline" : ""));
   button.type = "button";
-  button.disabled = complete || bulkBusy.has(group.seriesId);
+  button.disabled = complete || bulkBusy.has(scopeKey);
   button.title = cancelling ? "Отменить все активные заказы этого сериала" : "Заказать все вышедшие непросмотренные серии этого сериала";
   button.setAttribute("aria-label", (cancelling ? "Отменить все заказы: " : "Скачать все непросмотренные серии: ") + group.title);
   button.addEventListener("click", async (event) => {
     var _a2;
     event.preventDefault();
     event.stopPropagation();
-    if (bulkBusy.has(group.seriesId)) return;
-    bulkBusy.add(group.seriesId);
+    if (bulkBusy.has(scopeKey)) return;
+    bulkBusy.add(scopeKey);
     button.disabled = true;
     button.textContent = cancelling ? "Отменяем…" : "Отправляем…";
     try {
-      const response = await action(cancelling ? "cancel_all" : "download_all", (cancelling ? active : remaining)[0].id);
+      const response = await action(cancelling ? (group.seasonScope ? "cancel_season" : "cancel_all") : (group.seasonScope ? "download_season" : "download_all"), (cancelling ? active : remaining)[0].id);
       (_a2 = data.actions) != null ? _a2 : data.actions = {};
       for (const task of response.jobs) {
         if (cancelling) data.actions[String(task.episode)] = { ...data.actions[String(task.episode)], state: "cancelling", message: "Отменяем заказ…" };
@@ -569,35 +570,36 @@ function bulkButton(group) {
     } catch (error) {
       toast(error.message);
     } finally {
-      bulkBusy.delete(group.seriesId);
+      bulkBusy.delete(scopeKey);
       render();
     }
   });
   return button;
 }
 function bulkControls(group) {
+  const scopeKey = group.scopeKey || String(group.seriesId);
   const box = node("div", void 0, "card-actions");
   box.setAttribute("role", "group");
   box.setAttribute("aria-label", "Все вышедшие непросмотренные серии: " + group.title);
   box.append(bulkButton(group));
   const find = node("button", "Найти всё", "quiet");
   find.type = "button";
-  find.addEventListener("click", () => openSearch({ ...group.episodes[0], bulk: true, seriesTitle: group.title }));
+  find.addEventListener("click", () => openSearch({ ...group.episodes[0], bulk: true, seasonScope: !!group.seasonScope, seriesTitle: group.title }));
   const watch = node("button", "✓", "watch-button");
   watch.type = "button";
-  watch.disabled = bulkWatchBusy.has(group.seriesId);
+  watch.disabled = bulkWatchBusy.has(scopeKey);
   watch.title = "Отметить все вышедшие непросмотренные серии в MyShows";
   watch.setAttribute("aria-label", watch.title + ": " + group.title);
   watch.addEventListener("click", async () => {
-    if (bulkWatchBusy.has(group.seriesId)) return;
+    if (bulkWatchBusy.has(scopeKey)) return;
     let policy;
-    try { policy = await watchApproval(group.title + " · все непросмотренные серии (" + group.episodes.length + ")"); } catch (error) { toast(error.message); return; }
+    try { policy = await watchApproval(group.title + (group.seasonScope ? " · сезон " + group.episodes[0].season : " · все сезоны") + " · непросмотренных серий: " + group.episodes.length); } catch (error) { toast(error.message); return; }
     if (!policy) return;
-    bulkWatchBusy.add(group.seriesId);
+    bulkWatchBusy.add(scopeKey);
     watch.disabled = true;
     watch.classList.add("is-watched");
     try {
-      const r = await action("watch_all", group.episodes[0].id);
+      const r = await action(group.seasonScope ? "watch_season" : "watch_all", group.episodes[0].id);
       const done = await job(r.job, (progress) => {
         for (const id of progress.watched || []) watchedEpisodes.add(id);
         render();
@@ -610,7 +612,7 @@ function bulkControls(group) {
       data = await json("/api/episodes");
       render();
     } finally {
-      bulkWatchBusy.delete(group.seriesId);
+      bulkWatchBusy.delete(scopeKey);
       render();
     }
   });
@@ -622,7 +624,7 @@ async function downloadSelection(e, key, button) {
   if (!e.bulk) return downloadEpisode(e, key, button);
   button.disabled = true;
   try {
-    const r = await action("download_all", e.id, key);
+    const r = await action(e.seasonScope ? "download_season" : "download_all", e.id, key);
     (_a2 = data.actions) != null ? _a2 : data.actions = {};
     for (const task of r.jobs) data.actions[String(task.episode)] = { job: task.job, state: "queued", message: "Задание принято" };
     $("torrent-dialog").close();
@@ -663,7 +665,16 @@ function renderReleased() {
     copy.append(node("strong", group.title, "show-title"), node("div", eps.length + " непросмотренных серий", "show-meta"));
     summary.append(copy, node("span", void 0, "chevron"));
     details.append(summary);
+    let previousSeason = null;
+    const seasons = new Set(eps.map((e) => e.season));
     for (const e of eps) {
+      if (seasons.size > 1 && e.season !== previousSeason) {
+        previousSeason = e.season;
+        const members = group.episodes.filter((item) => item.season === e.season && !watchedEpisodes.has(item.id));
+        const header = node("div", void 0, "season-header");
+        header.append(node("strong", "Сезон " + e.season, "season-title"), bulkControls({ ...group, episodes: members, seasonScope: true, scopeKey: String(group.seriesId) + ":" + e.season }));
+        details.append(header);
+      }
       const row = node("div", void 0, "episode-line");
       row.dataset.episodeId = String(e.id);
       row.append(node("span", number(e), "episode-number"));
@@ -679,7 +690,7 @@ function renderReleased() {
       details.append(row);
     }
     const card = node("div", void 0, "episode-card");
-    card.append(details, bulkControls(group));
+    card.append(details, bulkControls({ ...group, episodes: group.episodes.filter((item) => !watchedEpisodes.has(item.id)) }));
     parent.append(card);
   }
   if (!total) parent.append(node("p", (data == null ? void 0 : data.updated) ? "Новых непросмотренных серий нет" : "Загружаем список MyShows…", "muted-empty"));
@@ -856,10 +867,10 @@ async function openSearch(e) {
   searchRunning = true;
   $("torrent-results").replaceChildren();
   $("torrent-filters").hidden = true;
-  $("torrent-dialog-title").textContent = e.seriesTitle + " · " + (e.bulk ? "Все вышедшие непросмотренные серии" : number(e));
+  $("torrent-dialog-title").textContent = e.seriesTitle + " · " + (e.bulk ? (e.seasonScope ? "Сезон " + e.season : "Все вышедшие непросмотренные серии") : number(e));
   $("torrent-status").textContent = "Ищем на подключённых трекерах. Ответы могут занять несколько минут…";
   if (!$("torrent-dialog").open) $("torrent-dialog").showModal();
-  const cacheId = (e.bulk ? "bulk-" : "") + e.id;
+  const cacheId = (e.bulk ? (e.seasonScope ? "season-" : "bulk-") : "") + e.id;
   const cached = searchCache.get(cacheId);
   if (cached && Date.now() - cached.at < 6e5) {
     searchRunning = false;
@@ -868,7 +879,7 @@ async function openSearch(e) {
     return;
   }
   try {
-    const r = await action(e.bulk ? "search_all" : "search", e.id);
+    const r = await action(e.bulk ? (e.seasonScope ? "search_season" : "search_all") : "search", e.id);
     let last = 0;
     const result = await job(r.job, (progress) => {
       var _a2;

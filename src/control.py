@@ -615,12 +615,12 @@ class Handler(sec.HardenedHandler):
    if not sec.consume([('actions',s['user'],30,60)]):self.send_error(429);return
    if self.path=='/api/action':
     try:
-     if data['op'] in ('download_all','cancel_all'):
-      if data['selection'] and data['op']!='download_all':raise ValueError('Unexpected selection')
-      if not sec.consume([('bulk-'+data['op'],s['user'],12 if data['op']=='cancel_all' else 4,300)]):self.send_error(429);return
-      self.json_output(episodes.submit_all(sys.modules[__name__],data['episode'],data['selection']) if data['op']=='download_all' else episodes.cancel_all(sys.modules[__name__],data['episode']),202);return
+     if data['op'] in ('download_all','cancel_all','download_season','cancel_season'):
+      if data['selection'] and data['op'] not in ('download_all','download_season'):raise ValueError('Unexpected selection')
+      if not sec.consume([('bulk-'+data['op'],s['user'],12 if data['op'] in ('cancel_all','cancel_season') else 4,300)]):self.send_error(429);return
+      self.json_output(episodes.submit_all(sys.modules[__name__],data['episode'],data['selection'],data['op']=='download_season') if data['op'] in ('download_all','download_season') else episodes.cancel_all(sys.modules[__name__],data['episode'],data['op']=='cancel_season'),202);return
      is_plan=data['op']=='download' and not data['selection'] and any(str(e['id'])==data['episode'] and e.get('future') for group in episodes.snapshot(sys.modules[__name__]).get('upcoming',[]) for e in group['episodes'])
-     if data['op'] in ('search','search_all','download','watch_all') and not is_plan and not sec.consume([('torrent-search',s['user'],12,300)]):self.send_error(429);return
+     if data['op'] in ('search','search_all','search_season','download','watch_all','watch_season') and not is_plan and not sec.consume([('torrent-search',s['user'],12,300)]):self.send_error(429);return
      with LOCK:key=episodes.submit(sys.modules[__name__],data['op'],data['episode'],data['selection'])
      self.json_output({'job':key},202)
     except episodes.UserError as exc:self.json_output({'message':str(exc)},400)
