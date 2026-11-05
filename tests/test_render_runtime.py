@@ -35,6 +35,22 @@ class RenderRuntime(unittest.TestCase):
   self.assertIn('id="playback-client"', page)  # playback selector retained
   self.assertIn('подключите аккаунт', page)
 
+ def test_apps_render_central_latest_selection_and_semantic_dom_order(self):
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory)
+   names=['Dubs-1.9.apk','Dubs-1.10.apk','Swiftfin-1.5.ipa','Swiftfin-1.5.1.ipa','SHA256SUMS']
+   for name in names:(root/name).touch()
+   config=dict(m.rt.settings());config['mobile']={'dir':directory,'artifacts':[{'file':n} for n in names]}
+   with patch.object(m.rt,'settings',return_value=config),patch.object(m,'watching',return_value=[]):
+    page=ui.render(m,'c'*43)
+   for name in [names[1],names[3],names[4]]:self.assertIn('href="/apps/'+name+'"',page)
+   for name in [names[0],names[2]]:self.assertNotIn('href="/apps/'+name+'"',page)
+   order=['events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel']
+   positions=[page.index('id="'+name+'"') for name in order]
+   self.assertEqual(positions,sorted(positions))
+   self.assertEqual(page.count('action="/myshows-login"'),1)
+   self.assertIn('name="csrf" value="'+'c'*43+'"',page)
+
  def _load(self, name, default=None):
   if name == 'preferences.json':
    return {'21': {'baseProfile': None, 'studio': 'Сыендук', 'mode': 'strict'}}

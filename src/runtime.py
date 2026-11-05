@@ -16,7 +16,7 @@ Environment overrides (all optional):
 
 The module never contains deployment addresses and never logs secrets.
 """
-import json, os, secrets, threading
+import json, os, re, secrets, threading
 from pathlib import Path
 
 _LOCK = threading.RLock()
@@ -172,6 +172,20 @@ def panel_bind():
         'key':p.get('key') or str(config_root()/'server.key'),
     }
 
+# Anchored package names only: unknown configured families remain available.
+_MOBILE_PACKAGE = re.compile(
+    r'(?P<client>Dubs|DubsTV|Swiftfin|Findroid|FindroidTV|Findroid-Dubs|Findroid-Dubs-TV)-'
+    r'(?P<version>[0-9]+(?:\.[0-9]+)+)(?P<variant>(?:-[A-Za-z0-9_]+)*)'
+    r'(?P<platform>\.apk|\.ipa)\Z')
+
+def _mobile_release(name):
+    match = _MOBILE_PACKAGE.fullmatch(name)
+    if not match:return None
+    version = tuple(int(part) for part in match['version'].split('.'))
+    # 1.5 and 1.5.0 are semantically equal.
+    while version and version[-1] == 0:version = version[:-1]
+    return (match['client'], match['variant'], match['platform']), version
+
 def mobile_artifacts():
     """Only artifacts explicitly configured AND present in the releases dir are offered."""
     out = []
@@ -183,7 +197,15 @@ def mobile_artifacts():
         try:
             if p.is_file() and not p.is_symlink():out.append({'file':name,'label':item.get('label') or name})
         except OSError:continue
-    return out
+    latest = {}
+    for item in out:
+        release = _mobile_release(item['file'])
+        if release:
+            family, version = release
+            latest[family] = max(latest.get(family, ()), version)
+    # Preserve configuration order and metadata; selection also feeds /apps allowlist.
+    return [item for item in out if (release := _mobile_release(item['file'])) is None
+            or release[1] == latest[release[0]]]
 
 def cleanup_enabled():
     return settings()['cleanup_enable']

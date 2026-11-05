@@ -11,7 +11,7 @@ class SecurityTests(unittest.TestCase):
   (self.root/'mobile').mkdir(exist_ok=True);(self.root/'mobile'/'Dubs-1.0.0.apk').write_bytes(b'PK'+b'x'*64)
   self.old_cfg=copy.deepcopy(m.CFG);m.CFG['mobile']=dict(m.CFG.get('mobile') or {});m.CFG['mobile']['dir']=str(self.root/'mobile')
   self.old_art=rt_mod.mobile_artifacts
-  _art=patch.object(m.rt,'mobile_artifacts',return_value=[{'file':'Dubs-1.0.0.apk','label':'Android APK'}]);_art.start()
+  _art=patch.object(m.rt,'mobile_artifacts',return_value=[{'file':'Dubs-1.0.0.apk','label':'Android APK'}]);_art.start();self.addCleanup(_art.stop)
   self.server=sec.BoundedServer(('127.0.0.1',0),m.Handler);self.port=self.server.server_port;self.url=f'http://127.0.0.1:{self.port}';sec.CONFIG['allowed_origins']=[self.url,'https://panel.example.org'];sec.CONFIG['public_hosts']=['panel.example.org'];self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start();self.client=requests.Session();self.client.headers['Origin']=self.url
   self.page=patch.object(m.Handler,'page',return_value='<p>PRIVATE OWNER DATA</p>');self.page.start()
  def tearDown(self):
@@ -77,6 +77,17 @@ class SecurityTests(unittest.TestCase):
     r=self.client.post(self.url+'/api/action',data={'csrf':csrf,'op':op,'episode':'19239971','selection':''})
     self.assertEqual(r.status_code,202);self.assertEqual(r.json(),{'job':'a'*32})
    self.assertEqual(submit.call_count,2)
+ def test_obsolete_configured_download_is_denied_by_real_filter(self):
+  (self.root/'mobile'/'Dubs-1.10.apk').write_bytes(b'latest')
+  config={'mobile':{'dir':str(self.root/'mobile'),'artifacts':[
+   {'file':'Dubs-1.0.0.apk'},{'file':'Dubs-1.10.apk'}]}}
+  with patch.object(m.rt,'mobile_artifacts',self.old_art), patch.object(m.rt,'settings',return_value=config):
+   self.assertEqual(self.client.get(self.url+'/apps/Dubs-1.0.0.apk',allow_redirects=False).status_code,404)
+  self.login()
+  with patch.object(m.rt,'mobile_artifacts',self.old_art), patch.object(m.rt,'settings',return_value=config):
+   self.assertEqual(self.client.get(self.url+'/apps/Dubs-1.0.0.apk').status_code,404)
+   self.assertEqual(self.client.get(self.url+'/apps/Dubs-1.10.apk').content,b'latest')
+  self.assertTrue((self.root/'mobile'/'Dubs-1.0.0.apk').is_file())
  def test_mobile_artifacts_require_owner_session(self):
   r=self.client.get(self.url+'/apps/Dubs-1.0.0.apk',allow_redirects=False);self.assertEqual(r.status_code,303);self.assertEqual(r.headers['Location'],'/login');self.assertNotIn(b'PK',r.content)
  def test_mobile_artifact_path_allowlist(self):

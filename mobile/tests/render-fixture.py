@@ -1,5 +1,6 @@
 """Render the real panel using isolated public fixture data, without config reads."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -16,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='dubs-client-render-') as directory:
     sys.path.insert(0, str(root / 'src'))
     import render
     fixture = types.SimpleNamespace(STUDIOS=[], load=lambda name, default: default,
-                                    watching=lambda: [], mobile_artifacts=lambda: [])
+                                    watching=lambda: [], mobile_artifacts=lambda: json.loads(os.environ.get("DUBS_TEST_ARTIFACTS", "[]")))
     print('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
           '<link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script><main>'
           + render.render(fixture, 'x' * 43) + '</main>')
