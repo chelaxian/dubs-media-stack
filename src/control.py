@@ -401,7 +401,11 @@ class Handler(sec.HardenedHandler):
  csp="default-src 'none'; style-src 'sha256-"+__import__('base64').b64encode(hashlib.sha256(STYLE.encode()).digest()).decode()+"'; img-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
  def log_message(self,*args):pass
  def output(self,body,status=200,cookie=None):
-  data=('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Мои сериалы · MyShows</title><meta name="theme-color" content="#000000"><style>'+STYLE+'</style><script src="/ui.js" defer></script><main>'+body+'</main></html>').encode();self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(data)))
+  family=sec.native_family(self.headers.get('User-Agent',''))
+  mobile=family in ('native:iOS','native:Android')
+  classes=('dubs-native-mobile'+(' dubs-native-ios' if family=='native:iOS' else '')) if mobile else ''
+  viewport='width=device-width,initial-scale=1'+(',maximum-scale=1,minimum-scale=1,user-scalable=no' if mobile else '')
+  data=('<!doctype html><html lang="ru" class="'+classes+'"><meta charset="utf-8"><meta name="viewport" content="'+viewport+'"><title>Мои сериалы · MyShows</title><meta name="theme-color" content="#000000"><style>'+STYLE+'</style><script src="/ui.js" defer></script><main>'+body+'</main></html>').encode();self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(data)))
   if cookie:self.send_header('Set-Cookie',cookie)
   self.end_headers();self.wfile.write(data)
  def json_output(self,data,status=200):

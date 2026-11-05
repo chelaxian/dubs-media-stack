@@ -18,8 +18,9 @@ with tempfile.TemporaryDirectory(prefix='dubs-client-render-') as directory:
     os.environ['SERIES_CONTROL_UI_DIR'] = str(root / 'src')
     sys.path.insert(0, str(root / 'src'))
     import render
-    fixture = types.SimpleNamespace(STUDIOS=json.loads((root / 'studios.json').read_text()), load=lambda name, default: default,
-                                    watching=lambda: [], mobile_artifacts=lambda: json.loads(os.environ.get("DUBS_TEST_ARTIFACTS", "[]")))
+    fixture = types.SimpleNamespace(STUDIOS=json.loads((root / 'studios.json').read_text()),
+                                    load=lambda name, default: json.loads(os.environ.get('DUBS_TEST_PREFERENCES','{}')) if name=='preferences.json' else default,
+                                    watching=lambda: json.loads(os.environ.get('DUBS_TEST_WATCHING','[]')), mobile_artifacts=lambda: json.loads(os.environ.get("DUBS_TEST_ARTIFACTS", "[]")))
     print('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
           '<link rel="stylesheet" href="/style.css"><script src="/ui.js" defer></script><main>'
           + render.render(fixture, 'x' * 43) + '</main>')

@@ -67,6 +67,7 @@ jobs:
           node mobile/tests/panel-compact-layout.cjs
           node mobile/tests/settings-order.cjs
           node mobile/tests/studio-order.cjs
+          node mobile/tests/phone-rows.cjs
           node mobile/tests/tv-remote.cjs
           node mobile/tests/tv-csp.cjs
           node mobile/tests/tv-settings-navigation.cjs

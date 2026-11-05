@@ -8,11 +8,12 @@
 Готовый проверенный исходный релиз:
 
 ```sh
-gh release download server-2026.11.05 --repo chelaxian/dubs-media-stack --pattern 'dubs-media-stack-*.tar.gz' --pattern '*.tar.gz.sha256'
+gh release download --repo chelaxian/dubs-media-stack --pattern 'dubs-media-stack-*.tar.gz' --pattern '*.tar.gz.sha256'
 sha256sum -c *.tar.gz.sha256
 ```
 
-В этом релизе также есть мобильные клиенты. Если скачан только исходный архив,
+Команда получает последний релиз; для закреплённой версии добавьте нужный тег
+после `download`. В релизе также есть мобильные клиенты. Если скачан только исходный архив,
 проверьте его отдельной контрольной суммой `.tar.gz.sha256` из того же релиза;
 общий `SHA256SUMS.txt` предназначен для полного набора загруженных артефактов.
 

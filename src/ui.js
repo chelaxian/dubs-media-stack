@@ -1,4 +1,13 @@
 "use strict";
+// Fixed application viewport only; ordinary browsers retain accessible zoom.
+if (document.documentElement.classList.contains("dubs-native-mobile")) {
+  for (const gesture of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(gesture, event => event.preventDefault(), {passive:false});
+  }
+  document.addEventListener("touchmove", event => {
+    if (event.touches && event.touches.length > 1) event.preventDefault();
+  }, {passive:false});
+}
 var _a, _b, _c, _d;
 if (!Array.prototype.flatMap) Object.defineProperty(Array.prototype, "flatMap", { value: function(fn, ctx) {
   return this.reduce((out, x, i) => out.concat(fn.call(ctx, x, i, this)), []);
@@ -614,6 +623,14 @@ async function downloadSelection(e, key, button) {
     button.disabled = false;
   }
 }
+function appendEpisodeControls(row, episode, text) {
+  const actions = controls(episode, text);
+  row.append(actions);
+  // Expanded details get their own grid row, without displacing the buttons.
+  for (const panel of [...actions.children]) {
+    if (panel.matches('.media-panel,.job-details')) row.append(panel);
+  }
+}
 function renderReleased() {
   const parent = $("released-view");
   for (const item of parent.querySelectorAll("details")) {
@@ -647,7 +664,8 @@ function renderReleased() {
       if (e.rating > 0) info += " · ★ " + Number(e.rating).toFixed(1);
       text.append(node("div", info, "episode-details"));
       if (!e.sonarrId) text.append(node("div", "Нумерация не сопоставлена с Sonarr", "episode-note"));
-      row.append(text, controls(e, text));
+      row.append(text);
+      appendEpisodeControls(row, e, text);
       details.append(row);
     }
     const card = node("div", void 0, "episode-card");
@@ -744,7 +762,8 @@ function renderUpcoming() {
     dayLabel.append(node("small", d.toLocaleDateString("ru-RU", { weekday: "short" })));
     const text = node("div");
     text.append(node("div", e.seriesTitle, "upcoming-title"), node("div", number(e) + " · " + e.title, "upcoming-subtitle"), node("div", relative(e), "episode-details"));
-    row.append(dayLabel, cover(e.seriesId), text, controls(e, text));
+    row.append(dayLabel, cover(e.seriesId), text);
+    appendEpisodeControls(row, e, text);
     parent.append(row);
   }
   if (!visible.length) parent.append(node("p", (data == null ? void 0 : data.updated) ? "MyShows пока не объявил новые серии на выбранную дату" : "Загружаем расписание MyShows…", "muted-empty"));
