@@ -380,7 +380,7 @@ function controls(e, text) {
     if (task) box.append(task);
     return box;
   }
-  const download = e.hasFile && e.jellyfinUrl ? node("a", "▶ В медиатеке", "library-link") : node("button", e.hasFile ? "▶ В медиатеке" : "Скачать", e.hasFile ? "library-link" : "");
+  const download = e.hasFile && e.jellyfinUrl ? node("a", "▶ Смотреть", "library-link") : node("button", e.hasFile ? "▶ Смотреть" : "Скачать", e.hasFile ? "library-link" : "");
   download.classList.add("episode-primary");
   if (download.tagName === "A") {
     download.href = e.jellyfinUrl;
@@ -1371,7 +1371,7 @@ async function watchApproval(label) {
     const warning = node("p", policy.delete_watched ? "Просмотренные видео будут удалены при автоматической очистке." : "Видео останутся в медиатеке и на диске.");
     const buttons = node("div", undefined, "watch-confirm-actions");
     const cancel = node("button", "Назад", "quiet");
-    const yes = node("button", "Отметить просмотренным");
+    const yes = node("button", "Отметить");
     cancel.type = yes.type = "button";
     buttons.append(cancel, yes); dialog.append(title, text, warning, buttons); document.body.append(dialog);
     const approved = await new Promise(resolve => {

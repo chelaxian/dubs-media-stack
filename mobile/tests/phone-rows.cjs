@@ -24,6 +24,7 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
    await page.setViewportSize({width,height:844});
    await page.locator('.episode-show').first().evaluate(n=>n.open=true);
    const edge=await page.locator('.episode-card').first().evaluate(n=>({header:n.querySelector('.card-actions').getBoundingClientRect().right,episodes:[...n.querySelectorAll('.episode-line>.episode-actions')].map(x=>x.getBoundingClientRect().right)}));
+   assert(Math.abs((await page.locator('.card-actions').first().boundingBox()).width-(await page.locator('.episode-line>.episode-actions').first().boundingBox()).width)<1,'shared left and right edges');
    for(const right of edge.episodes)assert(Math.abs(right-edge.header)<1,'matching show/episode right gutter');
    const pending=await page.locator('.is-not-ordered').first().evaluate(n=>{const b=x=>x.getBoundingClientRect().toJSON();return{box:b(n),download:b(n.querySelector('.episode-primary')),find:b(n.querySelector('.episode-find')),watch:b(n.querySelector('.watch-button'))}});
    assert(Math.abs(pending.box.width-pending.download.width)<1,'pending download full width');
@@ -87,6 +88,15 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   assert(Math.abs(row.actions.right-(row.row.right-30))<2,'desktop upcoming actions at right edge '+width);
   assert(row.text.right<=row.actions.left,'desktop upcoming copy/action collision '+width);
   await desktop.screenshot({path:'/tmp/dubs-desktop-upcoming-'+width+'.png'});
+ }
+ await desktop.goto('https://desktop.test/#released');await desktop.waitForSelector('.card-actions');await desktop.locator('.episode-show').evaluate(n=>n.open=true);
+ for(const tv of [false,true]){
+  await desktop.evaluate(tv=>document.documentElement.classList.toggle('dubs-tv',tv),tv);
+  for(const width of (tv?[1280,1920]:[768,1280,1920])){
+   await desktop.setViewportSize({width,height:1080});
+   const rails=await desktop.locator('.episode-card').evaluate(n=>{const h=n.querySelector('.card-actions').getBoundingClientRect();return{left:h.left,right:h.right,rows:[...n.querySelectorAll('.episode-line>.episode-actions')].map(x=>{const b=x.getBoundingClientRect();return{left:b.left,right:b.right}})}});
+   for(const r of rails.rows){assert(Math.abs(r.left-rails.left)<1,'desktop/TV shared rail left');assert(Math.abs(r.right-rails.right)<1,'desktop/TV shared rail right');}
+  }
  }
  await desktop.close();
  await browser.close();console.log('PASS phone cards 320–430: larger poster beside two action rows, no overlap/overflow, selected studio red, iOS controls reserve, native-only gesture lock with normal scrolling/browser zoom retained');

@@ -299,7 +299,7 @@ static __weak PanelController *activePanel;
  if(self.presentedViewController)return;
  UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Адрес веб-панели" message:@"Укажите HTTPS-адрес панели Dubs с действительным сертификатом. При смене сервера потребуется войти заново." preferredStyle:UIAlertControllerStyleAlert];
  [a addTextFieldWithConfigurationHandler:^(UITextField *field){field.placeholder=@"https://panel.example.org";field.text=self.home.absoluteString?:@"";field.keyboardType=UIKeyboardTypeURL;field.autocapitalizationType=UITextAutocapitalizationTypeNone;field.autocorrectionType=UITextAutocorrectionTypeNo;field.accessibilityIdentifier=@"server-address";[field addTarget:self action:@selector(serverAddressChanged:) forControlEvents:UIControlEventEditingChanged];}];
- [a addAction:[UIAlertAction actionWithTitle:@"Подключиться" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){NSURL *next=[self normalizedServer:a.textFields.firstObject.text];if(!next){dispatch_async(dispatch_get_main_queue(),^{[self serverSettings];});return;}if([next isEqual:self.home]){[self.web loadRequest:[NSURLRequest requestWithURL:next]];return;}self.switchingServer=YES;[self.web stopLoading];[self.web loadHTMLString:@"" baseURL:nil];[DubsEvents wipe:self revoke:NO];NSSet *types=WKWebsiteDataStore.allWebsiteDataTypes;[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:types modifiedSince:NSDate.distantPast completionHandler:^{self.serverURL=next;[NSUserDefaults.standardUserDefaults setObject:next.absoluteString forKey:@"panel_url"];[self updateServerSettingsAccessibilityValue];self.switchingServer=NO;[self.web loadRequest:[NSURLRequest requestWithURL:next]];}];}]];
+ [a addAction:[UIAlertAction actionWithTitle:@"Подключиться" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){NSURL *next=[self normalizedServer:a.textFields.firstObject.text];if(!next){dispatch_async(dispatch_get_main_queue(),^{[self serverSettings];});return;}if([next isEqual:self.home]){[self loadPanelURL:next];return;}self.switchingServer=YES;[self.web stopLoading];[self.web loadHTMLString:@"" baseURL:nil];[DubsEvents wipe:self revoke:NO];NSSet *types=WKWebsiteDataStore.allWebsiteDataTypes;[WKWebsiteDataStore.defaultDataStore removeDataOfTypes:types modifiedSince:NSDate.distantPast completionHandler:^{self.serverURL=next;[NSUserDefaults.standardUserDefaults setObject:next.absoluteString forKey:@"panel_url"];[self updateServerSettingsAccessibilityValue];self.switchingServer=NO;[self loadPanelURL:next];}];}]];
  a.actions.firstObject.enabled=self.home!=nil;
  if(self.home)[a addAction:[UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil]];
  [self presentViewController:a animated:YES completion:nil];
@@ -365,6 +365,22 @@ static __weak PanelController *activePanel;
   [self notice:@"События включены. Фоновая проверка — BGAppRefresh, iOS может откладывать или пропускать её." browser:nil];
  }];
 }
+- (void)webView:(WKWebView *)web didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error{
+ if(self.switchingServer||error.code==NSURLErrorCancelled||self.presentedViewController)return;
+ UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Нет соединения" message:@"Проверьте сеть или адрес сервера." preferredStyle:UIAlertControllerStyleAlert];
+ [a addAction:[UIAlertAction actionWithTitle:@"Повторить" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){if(self.home)[self loadPanelURL:self.home];}]];
+ [a addAction:[UIAlertAction actionWithTitle:@"Изменить сервер" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){[self serverSettings];}]];
+ [self presentViewController:a animated:YES completion:nil];
+}
+- (void)loadPanelURL:(NSURL *)url{
+#if DEBUG
+ if([NSProcessInfo.processInfo.arguments containsObject:@"--dubs-settings-fixture"]){
+  NSString *html=@"<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'><h1>Настройки</h1><section id='settings'><h2>Клиент</h2><div id='events-panel'></div></section>";
+  [self.web loadHTMLString:html baseURL:url];return;
+ }
+#endif
+ [self.web loadRequest:[NSURLRequest requestWithURL:url]];
+}
 - (void)viewDidAppear:(BOOL)animated{[super viewDidAppear:animated];if(!self.home)[self serverSettings];}
 - (void)webView:(WKWebView *)web didFinishNavigation:(WKNavigation *)navigation{
  if(![self panel:web.URL])return;
@@ -375,17 +391,13 @@ static __weak PanelController *activePanel;
 - (void)viewDidLoad{
  [super viewDidLoad];self.view.backgroundColor=UIColor.blackColor;self.serverURL=[self normalizedServer:[NSUserDefaults.standardUserDefaults stringForKey:@"panel_url"]?:@""];
  activePanel=self;
- WKWebViewConfiguration *config=[WKWebViewConfiguration new];config.websiteDataStore=WKWebsiteDataStore.defaultDataStore;config.preferences.javaScriptCanOpenWindowsAutomatically=NO;config.applicationNameForUserAgent=@"DubsNative/1.2 iOS";
+ WKWebViewConfiguration *config=[WKWebViewConfiguration new];config.websiteDataStore=WKWebsiteDataStore.defaultDataStore;config.preferences.javaScriptCanOpenWindowsAutomatically=NO;config.applicationNameForUserAgent=@"DubsNative/1.4 iOS DubsSettingsOnly/1";
  self.web=[[WKWebView alloc]initWithFrame:CGRectZero configuration:config];self.web.navigationDelegate=self;self.web.UIDelegate=self;self.web.allowsBackForwardNavigationGestures=YES;self.web.opaque=NO;self.web.backgroundColor=UIColor.blackColor;self.web.scrollView.backgroundColor=UIColor.blackColor;self.web.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.web];UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
  [NSLayoutConstraint activateConstraints:@[[self.web.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[self.web.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],[self.web.topAnchor constraintEqualToAnchor:safe.topAnchor],[self.web.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor]]];
- UIRefreshControl *refresh=[UIRefreshControl new];refresh.tintColor=UIColor.systemRedColor;[refresh addTarget:self action:@selector(reload:) forControlEvents:UIControlEventValueChanged];self.web.scrollView.refreshControl=refresh;if(self.home)[self.web loadRequest:[NSURLRequest requestWithURL:self.home]];
- UIButton *settings=[UIButton buttonWithType:UIButtonTypeSystem];[settings setTitle:@"⚙ Сервер" forState:UIControlStateNormal];settings.accessibilityLabel=@"Настройки адреса веб-панели";settings.accessibilityIdentifier=@"server-settings";[settings addTarget:self action:@selector(serverSettings) forControlEvents:UIControlEventTouchUpInside];settings.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:settings];self.serverSettingsButton=settings;[self updateServerSettingsAccessibilityValue];
- UIButton *events=[UIButton buttonWithType:UIButtonTypeSystem];[events setTitle:@"🔔" forState:UIControlStateNormal];events.accessibilityLabel=@"События и уведомления на этом устройстве";events.accessibilityIdentifier=@"events-settings";[events addTarget:self action:@selector(eventsSettings) forControlEvents:UIControlEventTouchUpInside];events.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:events];
- [NSLayoutConstraint activateConstraints:@[[events.trailingAnchor constraintEqualToAnchor:settings.leadingAnchor constant:-8],[events.topAnchor constraintEqualToAnchor:safe.topAnchor],[events.heightAnchor constraintEqualToConstant:44],[events.widthAnchor constraintEqualToConstant:44]]];
- [NSLayoutConstraint activateConstraints:@[[settings.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],[settings.topAnchor constraintEqualToAnchor:safe.topAnchor],[settings.heightAnchor constraintEqualToConstant:44],[settings.widthAnchor constraintEqualToConstant:100]]];
- settings.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.85];settings.tintColor=UIColor.systemRedColor;events.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.85];events.tintColor=UIColor.systemRedColor;
+ UIRefreshControl *refresh=[UIRefreshControl new];refresh.tintColor=UIColor.systemRedColor;[refresh addTarget:self action:@selector(reload:) forControlEvents:UIControlEventValueChanged];self.web.scrollView.refreshControl=refresh;if(self.home)[self loadPanelURL:self.home];
+
 }
-- (void)reload:(UIRefreshControl *)sender{if(self.home)[self.web loadRequest:[NSURLRequest requestWithURL:self.home]];else [self serverSettings];[sender endRefreshing];}
+- (void)reload:(UIRefreshControl *)sender{if(self.home)[self loadPanelURL:self.home];else [self serverSettings];[sender endRefreshing];}
 - (void)notice:(NSString *)message browser:(NSURL *)url{
  if(self.presentedViewController)return;
  UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Dubs" message:message preferredStyle:UIAlertControllerStyleAlert];[a addAction:[UIAlertAction actionWithTitle:@"ОК" style:UIAlertActionStyleCancel handler:nil]];

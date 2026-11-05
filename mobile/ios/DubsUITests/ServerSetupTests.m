@@ -35,11 +35,11 @@
 }
 - (void)testFirstStartValidationPersistenceAndChange {
  self.continueAfterFailure=NO;
- XCUIApplication *app=[XCUIApplication new];[app launch];
+ XCUIApplication *app=[XCUIApplication new];app.launchArguments=@[@"--dubs-settings-fixture"];[app launch];
  XCUIElement *field=app.textFields[@"server-address"];
  if(![field waitForExistenceWithTimeout:2]){
   if(app.alerts.buttons[@"ОК"].exists)[app.alerts.buttons[@"ОК"] tap];
-  [app.buttons[@"server-settings"] tap];
+  [app.links[@"Изменить адрес веб-панели"] tap];
  }
  XCTAssertTrue([field waitForExistenceWithTimeout:10]);
  // Use a different server from the persisted one, so old preferences cannot
@@ -56,14 +56,14 @@
  [self waitForExpectationsWithTimeout:5 handler:nil];
  // Observe the selected server only after asynchronous website-data removal
  // and preference commit. Predicate evaluation performs no UI actions.
- XCUIElement *settings=app.buttons[@"server-settings"];
- [self expectationForPredicate:[NSPredicate predicateWithFormat:@"value == %@",normalized] evaluatedWithObject:settings handler:nil];
- [self waitForExpectationsWithTimeout:60 handler:nil];
- XCTAssertEqualObjects(settings.value,normalized,@"New server must be saved before relaunch");
+ XCUIElement *settings=app.links[@"Изменить адрес веб-панели"];
+ XCTAssertTrue([settings waitForExistenceWithTimeout:60]);
+ [settings tap];XCTAssertTrue([field waitForExistenceWithTimeout:5]);XCTAssertEqualObjects(field.value,normalized);
+ [app.buttons[@"Отмена"] tap];
  [app terminate];[app launch];
  XCTAssertFalse([app.textFields[@"server-address"] waitForExistenceWithTimeout:2]);
  if(app.alerts.count)[app.alerts.buttons[@"ОК"] tap];
- [app.buttons[@"server-settings"] tap];XCTAssertTrue([field waitForExistenceWithTimeout:5]);XCTAssertEqualObjects(field.value,normalized);
+ [app.links[@"Изменить адрес веб-панели"] tap];XCTAssertTrue([field waitForExistenceWithTimeout:5]);XCTAssertEqualObjects(field.value,normalized);
  [app.buttons[@"Отмена"] tap];
 }
 @end

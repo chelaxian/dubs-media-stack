@@ -163,10 +163,10 @@ class AndroidNativeTest(unittest.TestCase):
 
     def test_build_overrides_keep_generic_defaults(self):
         self.assertIn("envOr('DUBS_APPLICATION_ID', 'app.dubs.panel')", self.gradle)
-        self.assertIn("envOr('DUBS_PHONE_VERSION_CODE', '14')", self.gradle)
-        self.assertIn("envOr('DUBS_PHONE_VERSION_NAME', '1.3.1')", self.gradle)
-        self.assertIn("envOr('DUBS_TV_VERSION_CODE', '9')", self.tv_gradle)
-        self.assertIn("envOr('DUBS_TV_VERSION_NAME', '1.5.1-tv')", self.tv_gradle)
+        self.assertIn("envOr('DUBS_PHONE_VERSION_CODE', '15')", self.gradle)
+        self.assertIn("envOr('DUBS_PHONE_VERSION_NAME', '1.4.0')", self.gradle)
+        self.assertIn("envOr('DUBS_TV_VERSION_CODE', '10')", self.tv_gradle)
+        self.assertIn("envOr('DUBS_TV_VERSION_NAME', '1.5.2-tv')", self.tv_gradle)
         # applicationId override must not move the source activity class
         self.assertIn("app.dubs.panel.MainActivity", self.manifest)
 
@@ -224,8 +224,8 @@ class IOSNativeTest(unittest.TestCase):
         self.assertIn("capturedOrigin isEqualToString:OriginString(self.serverURL)", player)
 
     def test_plist_and_entitlements(self):
-        self.assertIn("<string>1.3.0</string>", self.plist)
-        self.assertIn("<string>13</string>", self.plist)
+        self.assertIn("<string>1.4.0</string>", self.plist)
+        self.assertIn("<string>14</string>", self.plist)
         self.assertIn("dubs.events.refresh", self.plist)
         self.assertIn("BGTaskSchedulerPermittedIdentifiers", self.plist)
         self.assertIn("UIBackgroundModes", self.plist)
@@ -256,8 +256,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(self.wf.count("persist-credentials: false"), 4)
 
     def test_pr_versions_and_production_id_overrides_have_explicit_fallbacks(self):
-        for field, default in (("phone_version_code", "14"), ("phone_version_name", "1.3.1"),
-                               ("tv_version_code", "9"), ("tv_version_name", "1.5.1-tv")):
+        for field, default in (("phone_version_code", "15"), ("phone_version_name", "1.4.0"),
+                               ("tv_version_code", "10"), ("tv_version_name", "1.5.2-tv")):
             self.assertIn("inputs.%s || '%s'" % (field, default), self.wf)
         for name in ("DUBS_ANDROID_APPLICATION_ID", "DUBS_TV_APPLICATION_ID", "DUBS_IOS_BUNDLE_ID"):
             self.assertIn("vars." + name, self.wf)
@@ -283,10 +283,10 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("architectures == ['arm64']", self.wf)
         self.assertIn("info['CFBundleSupportedPlatforms'] == ['iPhoneOS']", self.wf)
         self.assertIn("info['MinimumOSVersion'] == '17.0'", self.wf)
-        self.assertIn("info['CFBundleShortVersionString'] == '1.3.0'", self.wf)
-        self.assertIn("info['CFBundleVersion'] == '13'", self.wf)
-        self.assertIn("zip -qry Dubs-1.3.0-TrollStore.ipa Payload", self.wf)
-        self.assertIn("shasum -a 256 Dubs-1.3.0-TrollStore.ipa > Dubs-1.3.0-TrollStore.ipa.sha256.txt", self.wf)
+        self.assertIn("info['CFBundleShortVersionString'] == '1.4.0'", self.wf)
+        self.assertIn("info['CFBundleVersion'] == '14'", self.wf)
+        self.assertIn("zip -qry Dubs-1.4.0-TrollStore.ipa Payload", self.wf)
+        self.assertIn("shasum -a 256 Dubs-1.4.0-TrollStore.ipa > Dubs-1.4.0-TrollStore.ipa.sha256.txt", self.wf)
         self.assertNotIn("dubs-ios-payload-unsigned.zip", self.wf)
         self.assertNotIn("parent signs", self.wf)
 

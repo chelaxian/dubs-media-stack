@@ -57,7 +57,7 @@ async function badgeRegressions(page) {
   assert((await page.locator('.media-panel').innerText()).includes('Raw tag H264'));
   assert.equal(await page.locator('.media-tracks li').count(),2);
   await page.locator('.media-badge').click();
-  assert.deepEqual(await page.locator('.episode-actions > a, .episode-actions > button').allTextContents(),['▶ В медиатеке','1080p К-Б','Найти','✓']);
+  assert.deepEqual(await page.locator('.episode-actions > a, .episode-actions > button').allTextContents(),['▶ Смотреть','1080p К-Б','Найти','✓']);
   await page.locator('.library-link').focus();
   for (const selector of ['.media-badge','.episode-actions button.quiet','.episode-actions .watch-button']) {
     await page.keyboard.press('Tab');

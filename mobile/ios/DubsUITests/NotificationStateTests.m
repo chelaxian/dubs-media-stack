@@ -52,7 +52,7 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  XCUIElement *field=app.textFields[@"server-address"];
  if(![field waitForExistenceWithTimeout:2]){
   if(app.alerts.buttons[@"ОК"].exists)[app.alerts.buttons[@"ОК"] tap];
-  [app.buttons[@"server-settings"] tap];
+  [app.links[@"Изменить адрес веб-панели"] tap];
  }
  XCTAssertTrue([field waitForExistenceWithTimeout:10]);
  NSString *normalized=@"https://example.org/";
@@ -63,17 +63,17 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  [self waitForExpectationsWithTimeout:5 handler:nil];
  // Wait for the real selected server after asynchronous website-data removal
  // and preference commit before opening notification settings.
- XCUIElement *settings=app.buttons[@"server-settings"];
- [self expectationForPredicate:[NSPredicate predicateWithFormat:@"value == %@",normalized] evaluatedWithObject:settings handler:nil];
- [self waitForExpectationsWithTimeout:60 handler:nil];
- XCTAssertEqualObjects(settings.value,normalized,@"Server must be selected before notification actions");
+ XCUIElement *settings=app.links[@"Изменить адрес веб-панели"];
+ XCTAssertTrue([settings waitForExistenceWithTimeout:60]);
+ [settings tap];XCTAssertTrue([field waitForExistenceWithTimeout:5]);XCTAssertEqualObjects(field.value,normalized);
+ [app.buttons[@"Отмена"] tap];
  if(app.alerts.count){XCUIElement *ok=app.alerts.buttons[@"ОК"];if(ok.exists)[ok tap];}
 }
 
 - (void)testEventsDialogShowsHonestDefaultOffAndPersists{
- XCUIApplication *app=[XCUIApplication new];[app launch];
+ XCUIApplication *app=[XCUIApplication new];app.launchArguments=@[@"--dubs-settings-fixture"];[app launch];
  [self configureServer:app];
- XCUIElement *events=app.buttons[@"events-settings"];
+ XCUIElement *events=app.buttons[@"Уведомления на этом устройстве"];
  XCTAssertTrue([events waitForExistenceWithTimeout:10]);[events tap];
  XCUIElement *dialog=app.alerts[@"События и уведомления"];
  XCTAssertTrue([dialog waitForExistenceWithTimeout:5]);
@@ -87,7 +87,7 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  XCTAssertTrue([app.alerts.buttons[@"Отключить и отозвать устройство"] exists]);
  [app.alerts.buttons[@"Закрыть"] tap];
  [app terminate];[app launch];
- XCUIElement *again=app.buttons[@"events-settings"];
+ XCUIElement *again=app.buttons[@"Уведомления на этом устройстве"];
  XCTAssertTrue([again waitForExistenceWithTimeout:10]);[again tap];
  XCTAssertTrue([app.alerts[@"События и уведомления"] waitForExistenceWithTimeout:5]);
  XCUIElement *persistedMessage=[[app.alerts[@"События и уведомления"].staticTexts matchingPredicate:statusMessage] firstMatch];
@@ -97,9 +97,9 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  [app.alerts.buttons[@"Закрыть"] tap];
 }
 - (void)testEnableFlowAsksPermissionOnceAndFailsHonestWithoutSession{
- XCUIApplication *app=[XCUIApplication new];[app launch];
+ XCUIApplication *app=[XCUIApplication new];app.launchArguments=@[@"--dubs-settings-fixture"];[app launch];
  [self configureServer:app];
- [app.buttons[@"events-settings"] tap];
+ [app.buttons[@"Уведомления на этом устройстве"] tap];
  XCUIElement *enable=app.alerts.buttons[@"Включить уведомления на устройстве"];
  XCTAssertTrue([enable waitForExistenceWithTimeout:5]);[enable tap];
  // System permission alert is opt-in: grant it via SpringBoard if shown.
@@ -111,12 +111,12 @@ static XCUIApplication *springboard(void){return [[XCUIApplication alloc]initWit
  XCTAssertTrue([notice waitForExistenceWithTimeout:15],@"expected honest failure notice without a logged-in session");
  if(app.alerts.buttons[@"ОК"].exists)[app.alerts.buttons[@"ОК"] tap];
  // A granted-but-failed registration must not leave the feature enabled.
- [app.buttons[@"events-settings"] tap];
+ [app.buttons[@"Уведомления на этом устройстве"] tap];
  XCTAssertTrue([app.alerts.buttons[@"Включить уведомления на устройстве"] waitForExistenceWithTimeout:5]);
  [app.alerts.buttons[@"Закрыть"] tap];
 }
 - (void)testNoPermissionAlertOnPlainLaunch{
- XCUIApplication *app=[XCUIApplication new];[app launch];
+ XCUIApplication *app=[XCUIApplication new];app.launchArguments=@[@"--dubs-settings-fixture"];[app launch];
  if([app.textFields[@"server-address"] waitForExistenceWithTimeout:5]){
   XCUIElement *connect=app.buttons[@"Подключиться"];
   if(connect.exists)[app.alerts.buttons.firstMatch tap];

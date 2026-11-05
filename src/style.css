@@ -148,3 +148,37 @@ html.dubs-native-ios .toolbar{top:44px}
  html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{grid-template-columns:minmax(0,1fr) 50px}
  html:not(.dubs-tv) .episode-actions.is-library-ready>.episode-primary{grid-column:1/-1;margin-right:40px}
 }
+
+/* One shared action rail for show headers and every episode state. */
+@media(min-width:701px){
+ .episode-card{--action-width:360px;--action-gap:8px;--action-circle:44px;--action-columns:minmax(0,1fr) 90px 75px var(--action-circle)}
+ .episode-card>.episode-show>summary{padding-right:400px}
+ .episode-card>.card-actions,.episode-line>.episode-actions{width:var(--action-width);max-width:var(--action-width);display:grid;grid-template-columns:var(--action-columns);gap:var(--action-gap);align-items:center}
+ .episode-card>.card-actions{right:30px}
+ .episode-line>.episode-actions{justify-self:end}
+ .episode-card>.card-actions>button,.episode-line>.episode-actions>button,.episode-line>.episode-actions>.library-link{min-width:0;justify-self:stretch;text-align:center;justify-content:center;box-sizing:border-box;min-height:36px}
+ .episode-card>.card-actions>.bulk-download{grid-column:1/3;grid-row:1}
+ .episode-card>.card-actions>button:nth-child(2){grid-column:3;grid-row:1}
+ .episode-card>.card-actions>.watch-button{grid-column:4;grid-row:1}
+ .episode-line>.episode-actions>.episode-primary{grid-column:1;grid-row:1}
+ .episode-line>.episode-actions>.media-badge{grid-column:2;grid-row:1;min-width:0;justify-content:center}
+ .episode-line>.episode-actions>.episode-find{grid-column:3;grid-row:1}
+ .episode-line>.episode-actions>.watch-button{grid-column:4;grid-row:1}
+ .episode-line>.episode-actions.is-not-ordered>.episode-primary{grid-column:1/3}
+ .episode-line>.episode-actions.is-active-download>.download-task{display:contents}
+ .episode-line>.episode-actions.is-active-download>.download-task>button:not(.download-ring){grid-column:1;grid-row:1;min-width:0;justify-self:stretch}
+ .episode-line>.episode-actions.is-active-download>.download-task>.download-ring{grid-column:2;grid-row:1;justify-self:center}
+ .episode-card>.card-actions>.watch-button,.episode-line>.episode-actions>.watch-button{width:var(--action-circle);height:var(--action-circle);min-height:var(--action-circle)!important;max-width:var(--action-circle);justify-self:end;padding:0!important;flex:none}
+ html.dubs-tv .episode-card{--action-width:420px;--action-gap:12px;--action-circle:44px;--action-columns:minmax(0,1fr) 100px 90px var(--action-circle)}
+ html.dubs-tv .episode-card>.card-actions{width:420px;max-width:420px;gap:12px;display:grid}
+ html.dubs-tv .episode-card>.episode-show>summary{padding-right:460px}
+}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-card>.card-actions{width:136px;grid-template-columns:minmax(0,1fr) 40px}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary{padding-right:162px}
+}
+.watch-confirm-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;flex-wrap:nowrap}
+.watch-confirm-actions>button{min-width:0;white-space:nowrap;padding:10px 12px;font-size:14px}
+html.dubs-native-ios.dubs-settings-only main{padding-top:0}
+html.dubs-native-ios.dubs-settings-only::before{display:none}
+html.dubs-native-ios.dubs-settings-only .toolbar{top:0}

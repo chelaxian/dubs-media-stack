@@ -16,11 +16,11 @@ on:
       phone_version_code:
         description: Phone versionCode
         required: false
-        default: '14'
+        default: '15'
       phone_version_name:
         description: Phone versionName
         required: false
-        default: 1.3.1
+        default: 1.4.0
       tv_application_id:
         description: TV applicationId (build var, default = repo generic)
         required: false
@@ -28,11 +28,11 @@ on:
       tv_version_code:
         description: TV versionCode
         required: false
-        default: '9'
+        default: '10'
       tv_version_name:
         description: TV versionName
         required: false
-        default: 1.5.1-tv
+        default: 1.5.2-tv
       ios_bundle_id:
         description: iOS bundle identifier (build var, default = repo generic)
         required: false
@@ -78,10 +78,10 @@ jobs:
     env:
       DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
       DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
-      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
-      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
-      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
-      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
+      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
+      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -187,11 +187,11 @@ jobs:
         if: ${{ env.DUBS_KEYSTORE_B64 != '' }}
         env:
           DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
           DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
           DUBS_KEYSTORE: /tmp/dubs-signing.p12
         run: |
           printf '%s' "$DUBS_KEYSTORE_B64" | base64 -d > /tmp/dubs-signing.p12
@@ -206,10 +206,10 @@ jobs:
       - name: Build debug APKs (no signing secrets — sanity artifact only)
         if: ${{ env.DUBS_KEYSTORE_B64 == '' }}
         env:
-          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '14' }}
-          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.3.1' }}
-          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '9' }}
-          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.1-tv' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
         run: |
           cd mobile/android
           gradle :app:lint :tv:lint :app:assembleDebug :tv:assembleDebug
@@ -313,8 +313,8 @@ jobs:
           info = plistlib.loads((app / 'Info.plist').read_bytes())
           bundle = info['CFBundleIdentifier']
           assert isinstance(bundle, str) and re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', bundle), 'Invalid built bundle identifier'
-          assert info['CFBundleShortVersionString'] == '1.3.0', 'Unexpected marketing version'
-          assert info['CFBundleVersion'] == '13', 'Unexpected build number'
+          assert info['CFBundleShortVersionString'] == '1.4.0', 'Unexpected marketing version'
+          assert info['CFBundleVersion'] == '14', 'Unexpected build number'
           assert info['MinimumOSVersion'] == '17.0', 'Unexpected minimum OS'
           assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Not an iPhoneOS app'
           executable = info['CFBundleExecutable']
@@ -339,16 +339,16 @@ jobs:
           expected = {'application-identifier': bundle, 'keychain-access-groups': [bundle]}
           assert entitlements == expected, 'Signed entitlements must be exactly app-only identity and Keychain group; no team, wildcard, push, get-task-allow or debug entitlements'
           PYVERIFY
-          zip -qry Dubs-1.3.0-TrollStore.ipa Payload
-          shasum -a 256 Dubs-1.3.0-TrollStore.ipa > Dubs-1.3.0-TrollStore.ipa.sha256.txt
+          zip -qry Dubs-1.4.0-TrollStore.ipa Payload
+          shasum -a 256 Dubs-1.4.0-TrollStore.ipa > Dubs-1.4.0-TrollStore.ipa.sha256.txt
 
       - name: Upload iOS artifacts and logs
         uses: actions/upload-artifact@v4
         with:
           name: ios-artifacts
           path: |
-            mobile/ios/Dubs-1.3.0-TrollStore.ipa
-            mobile/ios/Dubs-1.3.0-TrollStore.ipa.sha256.txt
+            mobile/ios/Dubs-1.4.0-TrollStore.ipa
+            mobile/ios/Dubs-1.4.0-TrollStore.ipa.sha256.txt
             mobile/ios/xcodebuild-test.log
             mobile/ios/trollstore-entitlements.plist
             mobile/ios/verified-entitlements.plist
