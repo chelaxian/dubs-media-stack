@@ -432,7 +432,6 @@ static __weak PanelController *activePanel;
 - (WKWebView *)webView:(WKWebView *)web createWebViewWithConfiguration:(WKWebViewConfiguration *)config forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features{
  NSURL *url=action.request.URL;if([self openPlayerURL:url])return nil;if([self panel:url])[self.web loadRequest:action.request];else if([self library:url]&&[self panel:self.web.URL])[self openEpisode:url];return nil;
 }
-- (void)webView:(WKWebView *)web didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error{if(!self.switchingServer&&error.code!=NSURLErrorCancelled)[self notice:@"Сервер или сеть недоступны. Потяните страницу вниз для повторного подключения. Задания на мини-ПК сохранены." browser:nil];}
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)web{[web reload];}
 /* Foreground presentation + validated tap routing. */
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification completionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler{completionHandler(UNNotificationPresentationOptionBanner|UNNotificationPresentationOptionSound);}

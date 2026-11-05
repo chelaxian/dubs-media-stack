@@ -237,7 +237,7 @@ class IOSNativeTest(unittest.TestCase):
         self.assertNotIn('🔔',source)
         self.assertIn('native-server-settings',source)
         self.assertIn('native-events-settings',source)
-        self.assertIn('didFailProvisionalNavigation',source)
+        self.assertEqual(source.count('didFailProvisionalNavigation'),1)
         self.assertIn('DubsSettingsOnly/1',source)
 
     def test_plist_and_entitlements(self):
