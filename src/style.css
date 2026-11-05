@@ -200,3 +200,14 @@ html.dubs-native-ios.dubs-settings-only .toolbar{top:0}
 @media(max-width:700px){html:not(.dubs-tv) .season-header{padding-right:14px}html:not(.dubs-tv) .season-header>.card-actions{width:136px;grid-template-columns:minmax(0,1fr) 40px;gap:4px}html:not(.dubs-tv) .season-header>.card-actions>button{font-size:11px;min-height:32px;padding:6px}html:not(.dubs-tv) .season-header>.card-actions>.bulk-download{grid-column:1/-1;grid-row:1}html:not(.dubs-tv) .season-header>.card-actions>button:nth-child(2){grid-column:1;grid-row:2}html:not(.dubs-tv) .season-header>.card-actions>.watch-button{grid-column:2;grid-row:2;width:32px;height:32px;min-height:32px!important;max-width:32px}}
 
 .episode-card>.card-actions{z-index:1}
+/* Compact controls while retaining the last MyShows sync timestamp. */
+.released-tools{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px}
+.released-tools small{text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upcoming-sync{margin:14px 0 8px}
+.calendar-controls{flex-wrap:nowrap;gap:8px;margin:0 0 8px}
+.calendar-controls select{min-width:0;max-width:240px;flex:0 1 240px}
+.calendar-controls button{white-space:nowrap}
+.calendar-controls .calendar-refresh{margin-left:auto}
+.show>.editor{margin-left:0;width:100%}
+.show>.editor .hint{font-size:11px;line-height:1.35;margin:10px 0 0}
+@media(max-width:700px){.released-tools{gap:5px}.released-tools button{font-size:11px;padding:7px 8px}.released-tools small{font-size:9px}.calendar-controls select{flex:1 1 0;font-size:12px;padding:8px 22px 8px 7px;min-height:36px}.calendar-controls button{font-size:11px;padding:8px;min-height:36px}.show>.editor .hint{font-size:10px}}

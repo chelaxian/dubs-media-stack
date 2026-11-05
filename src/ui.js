@@ -141,7 +141,7 @@ function count(n, unit) {
   $("visible-count").textContent = n;
   if ($("count-unit")) $("count-unit").textContent = unit;
 }
-function tools(parent) {
+function tools(parent, released = false) {
   const box = node("div", void 0, "episodes-tools");
   box.append(node("small", (data == null ? void 0 : data.updated) ? "MyShows · " + new Date(data.updated * 1e3).toLocaleString("ru-RU") : "Получаем данные MyShows…"));
   const button = node("button", "Обновить", "quiet");
@@ -159,9 +159,34 @@ function tools(parent) {
       button.disabled = false;
     }
   });
+  if (released) {
+    box.classList.add("released-tools");
+    const expand = node("button", "Развернуть все", "quiet expand-all");
+    expand.type = "button";
+    const update = () => {
+      const shows = [...parent.querySelectorAll(".episode-show")];
+      const allOpen = shows.length > 0 && shows.every((show) => show.open);
+      expand.textContent = allOpen ? "Свернуть все" : "Развернуть все";
+      expand.disabled = !shows.length;
+    };
+    expand.addEventListener("click", () => {
+      const shows = [...parent.querySelectorAll(".episode-show")];
+      const open = !shows.every((show) => show.open);
+      for (const show of shows) {
+        show.open = open;
+        if (open) openReleasedShows.add(show.dataset.seriesId);
+        else openReleasedShows.delete(show.dataset.seriesId);
+      }
+      update();
+    });
+    parent._updateExpand = update;
+    box.prepend(expand);
+    requestAnimationFrame(update);
+  }
   box.append(button);
   parent.append(box);
   if (data == null ? void 0 : data.error) parent.append(node("p", data.error, "episode-note"));
+  return box;
 }
 async function load(force = false) {
   if (loading) return;
@@ -650,7 +675,7 @@ function renderReleased() {
     else openReleasedShows.delete(item.dataset.seriesId);
   }
   parent.replaceChildren();
-  tools(parent);
+  tools(parent, true);
   let total = 0;
   for (const group of (data == null ? void 0 : data.released) || []) {
     const eps = group.episodes.filter((e) => !watchedEpisodes.has(e.id) && matches(group.title + " " + e.title + " " + number(e)));
@@ -658,6 +683,7 @@ function renderReleased() {
     total += eps.length;
     const details = node("details", void 0, "episode-show");
     details.dataset.seriesId = String(group.seriesId);
+    details.addEventListener("toggle", () => parent._updateExpand?.());
     details.open = openReleasedShows.has(String(group.seriesId));
     const summary = node("summary");
     summary.append(cover(group.seriesId));
@@ -732,7 +758,9 @@ function calendarGrid(parent, items) {
 function renderUpcoming() {
   const parent = $("upcoming-view");
   parent.replaceChildren();
-  tools(parent);
+  const sync = tools(parent);
+  sync.classList.add("upcoming-sync");
+  const refresh = sync.querySelector("button");
   const all = ((data == null ? void 0 : data.upcoming) || []).flatMap((g) => g.episodes).filter((e) => matches(e.seriesTitle + " " + e.title + " " + number(e)));
   const months = [...new Set(all.map((e) => e.calendarDate.slice(0, 7)))].sort();
   if (!months.includes(month)) month = months[0] || "";
@@ -758,8 +786,11 @@ function renderUpcoming() {
     renderUpcoming();
   });
   toolbar.append(select, toggle);
+  refresh.classList.add("calendar-refresh");
   if (day) {
-    const reset = node("button", "Все даты", "quiet");
+    const reset = node("button", "×", "quiet calendar-reset");
+    reset.title = "Все даты";
+    reset.setAttribute("aria-label", "Все даты");
     reset.type = "button";
     reset.addEventListener("click", () => {
       day = "";
@@ -767,6 +798,7 @@ function renderUpcoming() {
     });
     toolbar.append(reset);
   }
+  toolbar.append(refresh);
   parent.append(toolbar);
   const monthItems = all.filter((e) => e.calendarDate.startsWith(month));
   if (calendarMode) calendarGrid(parent, monthItems);
