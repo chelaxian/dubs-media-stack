@@ -88,9 +88,9 @@ const original=JSON.parse(fs.readFileSync(path.join(root,'studios.json'))).map(s
   await page.locator('.card-actions .bulk-download').first().waitFor();
   const styles=await page.locator('.card-actions .bulk-download').evaluateAll(ns=>ns.map(n=>({text:n.textContent,disabled:n.disabled,bg:getComputedStyle(n).backgroundColor,border:getComputedStyle(n).borderTopColor,opacity:getComputedStyle(n).opacity})));
   assert(styles.some(s=>s.text==='Скачать всё'&&s.bg==='rgb(215, 0, 11)'));
-  for(const text of ['Отменить','Всё заказано']){
+  for(const text of ['Отменить','В медиатеке']){
    const s=styles.find(s=>s.text===text);assert(s,text+' exists');assert.equal(s.bg,'rgb(37, 37, 40)');assert.equal(s.border,'rgb(255, 53, 61)');assert.equal(s.opacity,'1');
-   if(text==='Всё заказано')assert(s.disabled);
+   if(text==='В медиатеке')assert(s.disabled);
   }
   const cancelCard=page.locator('.episode-card').filter({has:page.locator('.bulk-download',{hasText:'Отменить'})});
   await cancelCard.locator('summary').first().click();

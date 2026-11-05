@@ -506,7 +506,7 @@ function taskControls(e, actions) {
       delete data.actions[String(e.id)];
       if (data.scheduled) delete data.scheduled[String(e.id)];
       render();
-      toast("Заказ отменён. Файлы сохранены");
+      toast("Скачивание отменено. Файлы сохранены");
     } catch (error) {
       toast(error.message);
       cancel.disabled = false;
@@ -571,11 +571,12 @@ function bulkButton(group) {
   });
   const cancelling = active.length > 0;
   const complete = !cancelling && !remaining.length;
-  const button = node("button", bulkBusy.has(scopeKey) ? "Отправляем…" : cancelling ? "Отменить" : complete ? "Всё заказано" : "Скачать всё", "bulk-download" + (complete ? " is-complete order-outline" : cancelling ? " order-outline" : ""));
+  const inLibrary = complete && group.episodes.every((e) => e.hasFile);
+  const button = node("button", bulkBusy.has(scopeKey) ? "Отправляем…" : cancelling ? "Отменить" : complete ? (inLibrary ? "В медиатеке" : "Скачивание") : "Скачать всё", "bulk-download" + (complete ? " is-complete order-outline" : cancelling ? " order-outline" : ""));
   button.type = "button";
   button.disabled = complete || bulkBusy.has(scopeKey);
-  button.title = cancelling ? "Отменить все активные заказы этого сериала" : "Заказать все вышедшие непросмотренные серии этого сериала";
-  button.setAttribute("aria-label", (cancelling ? "Отменить все заказы: " : "Скачать все непросмотренные серии: ") + group.title);
+  button.title = cancelling ? "Отменить все активные скачивания" : "Скачать все вышедшие непросмотренные серии";
+  button.setAttribute("aria-label", (cancelling ? "Отменить все скачивания: " : "Скачать все непросмотренные серии: ") + group.title);
   button.addEventListener("click", async (event) => {
     var _a2;
     event.preventDefault();
@@ -588,10 +589,10 @@ function bulkButton(group) {
       const response = await action(cancelling ? (group.seasonScope ? "cancel_season" : "cancel_all") : (group.seasonScope ? "download_season" : "download_all"), (cancelling ? active : remaining)[0].id);
       (_a2 = data.actions) != null ? _a2 : data.actions = {};
       for (const task of response.jobs) {
-        if (cancelling) data.actions[String(task.episode)] = { ...data.actions[String(task.episode)], state: "cancelling", message: "Отменяем заказ…" };
+        if (cancelling) data.actions[String(task.episode)] = { ...data.actions[String(task.episode)], state: "cancelling", message: "Отменяем скачивание…" };
         else data.actions[String(task.episode)] = { job: task.job, state: "queued", message: "Задание принято в очередь" };
       }
-      toast(cancelling ? "Отменяем все активные заказы сериала. Скачанные файлы сохранятся" : response.jobs.length ? "Принято серий: " + response.jobs.length + ". Ищем общие раздачи сезонов" : "Все серии уже скачаны или заказаны");
+      toast(cancelling ? "Отменяем все активные скачивания. Скачанные файлы сохранятся" : response.jobs.length ? "Принято серий: " + response.jobs.length + ". Ищем общие раздачи сезонов" : "Все серии уже скачаны или добавлены в очередь");
     } catch (error) {
       toast(error.message);
     } finally {
@@ -821,7 +822,7 @@ function renderUpcoming() {
     parent.append(row);
   }
   if (!visible.length) parent.append(node("p", (data == null ? void 0 : data.updated) ? "MyShows пока не объявил новые серии на выбранную дату" : "Загружаем расписание MyShows…", "muted-empty"));
-  parent.append(node("p", "Это даты выхода из MyShows. Нужная озвучка может появиться позже. Заказ ожидает подходящую раздачу.", "episode-note"));
+  parent.append(node("p", "Это даты выхода из MyShows. Нужная озвучка может появиться позже. Скачивание начнётся, когда появится подходящая раздача.", "episode-note"));
   count(visible.length, "серий");
 }
 function render() {
