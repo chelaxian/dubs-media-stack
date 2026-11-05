@@ -7,6 +7,7 @@ import jellyfin_links
 import studio_order
 import runtime as rt
 import upgrades
+import schedule_settings
 import notifications
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
 VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ssa','.sub','.vtt','.mka','.ac3','.aac'}
@@ -801,7 +802,7 @@ def run(m):
    if 'daily-upgrades' not in active and upgrades.due(read(m.WORKER_STATE/'daily-upgrades.json',{})):
     active['daily-upgrades']=POOL.submit(upgrades.run_daily,m,sys.modules[__name__])
    last_daily=now
-  if now-last_refresh>=600 and len(set(active.values()))<2:
+  if now-last_refresh>=schedule_settings.current()['sync_minutes']*60 and len(set(active.values()))<2:
    active['refresh']=POOL.submit(refresh,m);last_refresh=now
   for path in sorted((m.STATE/'requests').glob('*.json')):
    key=path.stem

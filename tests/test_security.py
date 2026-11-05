@@ -20,6 +20,14 @@ class SecurityTests(unittest.TestCase):
   r=self.client.get(self.url);nonce=re.search('name="nonce" value="([^"]+)"',r.text).group(1);reply=Mock(status_code=200);reply.json.return_value={'User':{'Id':userid or sec.CONFIG['owner_ids'][0],'Policy':{'IsAdministrator':admin}}}
   with patch.object(m.requests,'post',return_value=reply):return self.client.post(self.url+'/login',data={'nonce':nonce,'username':'testowner','password':'not-a-real-password'},allow_redirects=False)
  def csrf(self):return sec.session(self.client.cookies.get('series_session'),self.client.headers['User-Agent'])['csrf']
+ def test_schedule_owner_csrf_and_validation(self):
+  self.assertEqual(self.client.get(self.url+'/api/schedule-settings').status_code,401)
+  self.login();payload={'csrf':self.csrf(),'sync_minutes':'15','upgrade_time':'19:30','upgrade_interval_hours':'12'}
+  with patch.object(m.schedule_settings,'update',return_value={'sync_minutes':15,'upgrade_time':'19:30','upgrade_interval_hours':12}) as update:
+   self.assertEqual(self.client.post(self.url+'/api/schedule-settings',data=dict(payload,csrf='x'*43)).status_code,403)
+   update.assert_not_called()
+   self.assertEqual(self.client.post(self.url+'/api/schedule-settings',data=payload).status_code,200)
+   update.assert_called_once_with({'sync_minutes':15,'upgrade_time':'19:30','upgrade_interval_hours':12})
  def test_watch_preferences_owner_csrf_strict_fields(self):
   with patch.object(m.watch_settings,'current',return_value={'confirm_watch':False,'delete_watched':False}),patch.object(m.watch_settings,'update',return_value={'confirm_watch':True,'delete_watched':False}) as update:
    self.assertEqual(self.client.get(self.url+'/api/watch-settings').status_code,401)

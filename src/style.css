@@ -133,3 +133,11 @@ html.dubs-native-ios .toolbar{top:44px}
  html:not(.dubs-tv) .is-active-download>.watch-button{grid-column:2;grid-row:2;justify-self:end}
 }
 @media(max-width:700px){html:not(.dubs-tv) .episode-line>.episode-actions.is-active-download,html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{width:136px}html:not(.dubs-tv) .episode-line>.episode-actions .download-ring{padding:0!important}}
+
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-not-ordered{display:grid;width:136px;grid-template-columns:minmax(0,1fr) 40px;align-items:center}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.episode-primary{grid-column:1/-1;grid-row:1;justify-self:stretch}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.episode-find{grid-column:1;grid-row:2;justify-self:stretch}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.watch-button{grid-column:2;grid-row:2;justify-self:end}
+}
+.schedule-form{display:grid;gap:14px}.schedule-form label{display:grid;gap:7px}.schedule-form input{max-width:100%;box-sizing:border-box}

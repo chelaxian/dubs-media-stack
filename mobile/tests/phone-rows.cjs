@@ -4,6 +4,7 @@ const root=path.resolve(__dirname,'../..');
 const env={...process.env,DUBS_TEST_WATCHING:JSON.stringify([{title:'Первый брак Джорджи и Мэнди',series:{id:7,title:'Georgie and Mandy',year:2024,status:'continuing'}}]),DUBS_TEST_PREFERENCES:JSON.stringify({'7':{studio:'LostFilm',mode:'fallback'}})};
 const html=execFileSync('python3',[path.join(__dirname,'render-fixture.py')],{env,encoding:'utf8'});
 const data={updated:1,scheduled:{99:{state:'scheduled'}},actions:{31:{state:'waiting',message:'Ожидаем раздачу',percent:0},99:{state:'queued',message:'Запланировано'}},released:[{seriesId:7,title:'Первый брак Джорджи и Мэнди',episodes:[{id:31,seriesId:7,sonarrId:1,season:3,number:5,title:'Длинное название серии',airDate:'2026-11-05'},{id:32,seriesId:7,sonarrId:2,season:3,number:4,title:'Уже скачанная серия',airDate:'2026-11-01',hasFile:true,jellyfinUrl:'https://jellyfin.example.org/web/#/details?id=abc',localMedia:{status:'verified',quality:{label:'1080p'},audioTracks:[{language:'rus',studio:'LostFilm'}]}}]}],upcoming:[{id:99,seriesId:7,seriesTitle:'Первый брак Джорджи и Мэнди',title:'A Snotty Attitude and a Party on a School Night',season:3,number:5,airDate:'2099-11-06',calendarDate:'2099-11-06',future:true,sonarrId:9}]};
+data.released[0].episodes.push({id:33,seriesId:7,sonarrId:3,season:3,number:3,title:'Ещё не заказана',airDate:'2026-10-01'});
 data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэнди',episodes:data.upcoming}];
 (async()=>{
  const browser=await chromium.launch({executablePath:'/opt/google/chrome/chrome',args:['--no-sandbox','--disable-gpu']});
@@ -22,6 +23,10 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   for(const width of [320,375,390,430]){
    await page.setViewportSize({width,height:844});
    await page.locator('.episode-show').first().evaluate(n=>n.open=true);
+   const pending=await page.locator('.is-not-ordered').first().evaluate(n=>{const b=x=>x.getBoundingClientRect().toJSON();return{box:b(n),download:b(n.querySelector('.episode-primary')),find:b(n.querySelector('.episode-find')),watch:b(n.querySelector('.watch-button'))}});
+   assert(Math.abs(pending.box.width-pending.download.width)<1,'pending download full width');
+   assert(Math.abs(pending.find.y-pending.watch.y)<1,'find and check same row');
+   assert(pending.download.bottom<=pending.find.y,'download above find');
    const active=await page.locator('.is-active-download').evaluate(n=>{const b=x=>x.getBoundingClientRect().toJSON();return{box:b(n),cancel:b(n.querySelector('.download-task>button')),ring:b(n.querySelector('.download-ring')),label:b(n.querySelector('.ring-label')),find:b(n.querySelector('.episode-find')),watch:b(n.querySelector('.watch-button'))}});
    assert(Math.abs(active.cancel.width-active.find.width)<1,'cancel/find width');
    assert(Math.abs(active.ring.width-active.watch.width)<1 && Math.abs(active.ring.height-active.watch.height)<1,'ring/watch dimensions');

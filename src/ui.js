@@ -399,6 +399,7 @@ function controls(e, text) {
   find.addEventListener("click", () => openSearch(e));
   if (e.hasFile && media && !task) box.classList.add("is-library-ready");
   if (task && !failed && !media) box.classList.add("is-active-download");
+  if (!task && !e.hasFile) box.classList.add("is-not-ordered");
   box.append(task || download);
   if (task && failed) box.append(download);
   if (media) box.append(media.toggle);
@@ -682,7 +683,7 @@ function renderReleased() {
     parent.append(card);
   }
   if (!total) parent.append(node("p", (data == null ? void 0 : data.updated) ? "Новых непросмотренных серий нет" : "Загружаем список MyShows…", "muted-empty"));
-  parent.append(node("p", "Отметка просмотра передаётся в MyShows. Просмотренные файлы удаляются вашей автоматической очисткой.", "episode-note"));
+  parent.append(node("p", "Отметка просмотра передаётся в MyShows. Удаление файлов управляется переключателем «Удалять просмотренные» в настройках.", "episode-note"));
   count(total, "серий");
   if (pendingEpisode !== null) focusEpisode(pendingEpisode);
 }
@@ -1404,4 +1405,17 @@ async function watchApproval(label) {
       });
     }
   }
+}
+
+{
+ const form=$("schedule-settings-form");
+ if(form)form.addEventListener("submit",async ev=>{
+  ev.preventDefault();const button=form.querySelector('button');button.disabled=true;$("schedule-status").textContent="Сохраняем…";
+  try{
+   const session=await json('/api/session');
+   const saved=await json('/api/schedule-settings',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:session.csrf,sync_minutes:$("schedule-sync").value,upgrade_time:$("schedule-time").value,upgrade_interval_hours:$("schedule-hours").value})});
+   $("schedule-sync").value=saved.sync_minutes;$("schedule-time").value=saved.upgrade_time;$("schedule-hours").value=saved.upgrade_interval_hours;
+   $("schedule-status").textContent="Расписание сохранено. Применяется без перезапуска";
+  }catch(error){$("schedule-status").textContent=error.message;}finally{button.disabled=false;}
+ });
 }
