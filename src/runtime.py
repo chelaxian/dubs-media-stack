@@ -208,7 +208,8 @@ def mobile_artifacts():
             or release[1] == latest[release[0]]]
 
 def cleanup_enabled():
-    return settings()['cleanup_enable']
+    import watch_settings
+    return watch_settings.current()['delete_watched']
 
 def resolve_studio(studios, value):
     """Current index of a preferred studio.

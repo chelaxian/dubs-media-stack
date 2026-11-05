@@ -116,3 +116,20 @@ html.dubs-native-ios .toolbar{top:44px}
  html:not(.dubs-tv) .upcoming-line>.episode-actions{grid-column:4;grid-row:1;justify-self:end;justify-content:flex-end;align-items:center;flex-direction:row;flex-wrap:nowrap}
  html:not(.dubs-tv) .upcoming-line .download-task{flex-wrap:nowrap}
 }
+
+/* Keep the SVG and its label concentric in WebKit and Chromium. */
+.download-ring{box-sizing:border-box;border:0;padding:0;line-height:1;overflow:hidden}
+.download-ring svg{display:block;grid-area:1/1}
+.download-ring .ring-label{inset:0;display:grid;place-items:center;line-height:1;text-align:center;margin:0;padding:0}
+.watch-confirm-dialog{max-width:440px;width:calc(100% - 32px);box-sizing:border-box;background:#171719;color:#fff;border:1px solid #444;border-radius:18px;padding:24px}
+.watch-confirm-dialog::backdrop{background:#000b}
+.watch-confirm-actions{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-active-download{display:grid;grid-template-columns:minmax(0,1fr) 40px;align-items:center}
+ html:not(.dubs-tv) .is-active-download>.download-task{display:contents}
+ html:not(.dubs-tv) .is-active-download>.download-task>button:not(.download-ring){grid-column:1;grid-row:1;justify-self:stretch;min-width:0}
+ html:not(.dubs-tv) .is-active-download>.download-task>.download-ring{grid-column:2;grid-row:1;justify-self:end;width:32px;height:32px;min-height:32px;max-height:32px;padding:0}
+ html:not(.dubs-tv) .is-active-download>.episode-find{grid-column:1;grid-row:2;justify-self:stretch;min-width:0}
+ html:not(.dubs-tv) .is-active-download>.watch-button{grid-column:2;grid-row:2;justify-self:end}
+}
+@media(max-width:700px){html:not(.dubs-tv) .episode-line>.episode-actions.is-active-download,html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{width:136px}html:not(.dubs-tv) .episode-line>.episode-actions .download-ring{padding:0!important}}

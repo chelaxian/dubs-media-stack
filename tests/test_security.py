@@ -20,6 +20,17 @@ class SecurityTests(unittest.TestCase):
   r=self.client.get(self.url);nonce=re.search('name="nonce" value="([^"]+)"',r.text).group(1);reply=Mock(status_code=200);reply.json.return_value={'User':{'Id':userid or sec.CONFIG['owner_ids'][0],'Policy':{'IsAdministrator':admin}}}
   with patch.object(m.requests,'post',return_value=reply):return self.client.post(self.url+'/login',data={'nonce':nonce,'username':'testowner','password':'not-a-real-password'},allow_redirects=False)
  def csrf(self):return sec.session(self.client.cookies.get('series_session'),self.client.headers['User-Agent'])['csrf']
+ def test_watch_preferences_owner_csrf_strict_fields(self):
+  with patch.object(m.watch_settings,'current',return_value={'confirm_watch':False,'delete_watched':False}),patch.object(m.watch_settings,'update',return_value={'confirm_watch':True,'delete_watched':False}) as update:
+   self.assertEqual(self.client.get(self.url+'/api/watch-settings').status_code,401)
+   self.login()
+   self.assertEqual(self.client.get(self.url+'/api/watch-settings').json()['delete_watched'],False)
+   payload={'csrf':self.csrf(),'confirm_watch':'1','delete_watched':'0'}
+   self.assertEqual(self.client.post(self.url+'/api/watch-settings',data=dict(payload,csrf='x'*43)).status_code,403)
+   self.assertEqual(self.client.post(self.url+'/api/watch-settings',data=dict(payload,delete_watched='false')).status_code,400)
+   update.assert_not_called()
+   self.assertEqual(self.client.post(self.url+'/api/watch-settings',data=payload).status_code,200)
+   update.assert_called_once_with({'confirm_watch':True,'delete_watched':False})
  def test_native_session_survives_idle_restart_and_webview_update(self):
   self.client.headers['User-Agent']='OldWebView DubsNative/1.1 Android DubsTV/1.0'
   r=self.login();self.assertIn('Max-Age=31536000',r.headers['Set-Cookie'])

@@ -21,6 +21,13 @@ data.upcoming=[{seriesId:7,title:'Первый брак Джорджи и Мэн
   await page.goto('https://panel.test/#released');await page.waitForSelector('.card-actions');
   for(const width of [320,375,390,430]){
    await page.setViewportSize({width,height:844});
+   await page.locator('.episode-show').first().evaluate(n=>n.open=true);
+   const active=await page.locator('.is-active-download').evaluate(n=>{const b=x=>x.getBoundingClientRect().toJSON();return{box:b(n),cancel:b(n.querySelector('.download-task>button')),ring:b(n.querySelector('.download-ring')),label:b(n.querySelector('.ring-label')),find:b(n.querySelector('.episode-find')),watch:b(n.querySelector('.watch-button'))}});
+   assert(Math.abs(active.cancel.width-active.find.width)<1,'cancel/find width');
+   assert(Math.abs(active.ring.width-active.watch.width)<1 && Math.abs(active.ring.height-active.watch.height)<1,'ring/watch dimensions');
+   assert(Math.abs(active.ring.x-active.watch.x)<1,'ring/watch aligned');
+   assert(Math.abs(active.ring.x+active.ring.width/2-active.label.x-active.label.width/2)<1,'ring label centered X');
+   assert(Math.abs(active.ring.y+active.ring.height/2-active.label.y-active.label.height/2)<1,'ring label centered Y');
    const row=await page.locator('.episode-card').first().evaluate(n=>{const s=n.querySelector('summary').getBoundingClientRect(),p=n.querySelector('.cover').getBoundingClientRect(),a=n.querySelector('.card-actions').getBoundingClientRect(),t=n.querySelector('.show-copy').getBoundingClientRect();return{s:s.toJSON(),p:p.toJSON(),a:a.toJSON(),t:t.toJSON()};});
    assert(row.a.top<row.p.bottom&&row.a.bottom>row.p.top,'released same row '+width);
    assert(row.t.right<=row.a.left+1,'released text/actions overlap '+width);

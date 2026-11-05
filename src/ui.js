@@ -398,6 +398,7 @@ function controls(e, text) {
   find.disabled = !e.sonarrId;
   find.addEventListener("click", () => openSearch(e));
   if (e.hasFile && media && !task) box.classList.add("is-library-ready");
+  if (task && !failed && !media) box.classList.add("is-active-download");
   box.append(task || download);
   if (task && failed) box.append(download);
   if (media) box.append(media.toggle);
@@ -409,6 +410,9 @@ function controls(e, text) {
   watched.setAttribute("aria-label", "Отметить " + number(e) + " просмотренной в MyShows");
   watched.addEventListener("click", async () => {
     if (watchedEpisodes.has(e.id)) return;
+    let policy;
+    try { policy = await watchApproval(number(e) + " · " + (e.seriesTitle || e.title || "Серия")); } catch (error) { toast(error.message); return; }
+    if (!policy) return;
     watched.disabled = true;
     watched.classList.add("is-watched");
     watched.setAttribute("aria-pressed", "true");
@@ -417,7 +421,7 @@ function controls(e, text) {
     try {
       const r = await action("watch", e.id);
       await job(r.job);
-      toast("Отмечено в MyShows. Автоочистка удалит просмотренный файл при следующей сверке");
+      toast(policy.delete_watched ? "Отмечено в MyShows. Файл удалит автоочистка" : "Отмечено в MyShows. Файл сохранён в медиатеке");
     } catch (error) {
       watchedEpisodes.delete(e.id);
       render();
@@ -585,6 +589,9 @@ function bulkControls(group) {
   watch.setAttribute("aria-label", watch.title + ": " + group.title);
   watch.addEventListener("click", async () => {
     if (bulkWatchBusy.has(group.seriesId)) return;
+    let policy;
+    try { policy = await watchApproval(group.title + " · все непросмотренные серии (" + group.episodes.length + ")"); } catch (error) { toast(error.message); return; }
+    if (!policy) return;
     bulkWatchBusy.add(group.seriesId);
     watch.disabled = true;
     watch.classList.add("is-watched");
@@ -596,7 +603,7 @@ function bulkControls(group) {
       });
       for (const id of done.watched || []) watchedEpisodes.add(id);
       render();
-      toast("Все серии отмечены в MyShows. Просмотренные файлы удалит автоочистка");
+      toast(policy.delete_watched ? "Все серии отмечены. Файлы удалит автоочистка" : "Все серии отмечены. Файлы сохранены в медиатеке");
     } catch (error) {
       toast(error.message);
       data = await json("/api/episodes");
@@ -1347,4 +1354,54 @@ if (studioForm) {
   setInterval(pollOrder, 5000);
   window.addEventListener("hashchange", pollOrder);
   pollOrder();
+}
+
+let watchPromptBusy = false;
+async function watchApproval(label) {
+  if (watchPromptBusy) return null;
+  watchPromptBusy = true;
+  try {
+    const policy = await json("/api/watch-settings");
+    if (!policy.confirm_watch) return policy;
+    const previous = document.activeElement;
+    const dialog = node("dialog", undefined, "watch-confirm-dialog");
+    const title = node("h3", "Отметить просмотренным?");
+    const text = node("p", label);
+    const warning = node("p", policy.delete_watched ? "Просмотренные видео будут удалены при автоматической очистке." : "Видео останутся в медиатеке и на диске.");
+    const buttons = node("div", undefined, "watch-confirm-actions");
+    const cancel = node("button", "Назад", "quiet");
+    const yes = node("button", "Отметить просмотренным");
+    cancel.type = yes.type = "button";
+    buttons.append(cancel, yes); dialog.append(title, text, warning, buttons); document.body.append(dialog);
+    const approved = await new Promise(resolve => {
+      let accept = false;
+      yes.onclick = () => { accept = true; dialog.close(); };
+      cancel.onclick = () => dialog.close();
+      dialog.addEventListener("close", () => resolve(accept), {once:true});
+      dialog.showModal(); cancel.focus();
+    });
+    dialog.remove();
+    if (previous && previous.isConnected) previous.focus();
+    return approved ? policy : null;
+  } finally { watchPromptBusy = false; }
+}
+{
+  const confirm = $("confirm-watch-switch"), remove = $("delete-watched-switch"), status = $("watch-settings-status");
+  if (confirm && remove) {
+    for (const [button, key] of [[confirm, "confirm_watch"], [remove, "delete_watched"]]) {
+      button.addEventListener("click", async () => {
+        confirm.disabled = remove.disabled = true; status.textContent = "Сохраняем…";
+        try {
+          const policy = await json("/api/watch-settings"); policy[key] = !policy[key];
+          const session = await json("/api/session");
+          const saved = await json("/api/watch-settings", {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:new URLSearchParams({csrf:session.csrf, confirm_watch:policy.confirm_watch ? "1":"0", delete_watched:policy.delete_watched ? "1":"0"})});
+          confirm.setAttribute("aria-checked", String(saved.confirm_watch)); remove.setAttribute("aria-checked", String(saved.delete_watched));
+          if ($("cleanup-mode")) $("cleanup-mode").textContent = saved.delete_watched ? "КАЖДЫЕ 30 МИН" : "ОТКЛЮЧЕНО";
+          if ($("cleanup-description")) $("cleanup-description").textContent = saved.delete_watched ? "Просмотренные в MyShows серии автоматически удаляются из медиатеки и проверенных исходных загрузок. Мониторинг отключается, чтобы они не скачались снова." : "Автоочистка отключена: просмотренные файлы сохраняются в медиатеке и исходных загрузках.";
+          status.textContent = saved.delete_watched ? "Сохранено. Удаление просмотренных включено" : "Сохранено. Просмотренные файлы сохраняются";
+        } catch (error) { status.textContent = error.message; }
+        finally { confirm.disabled = remove.disabled = false; }
+      });
+    }
+  }
 }

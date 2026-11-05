@@ -15,6 +15,7 @@ import episodes
 import notifications
 import players
 import studio_order
+import watch_settings
 STATE=rt.state_root()
 CFG=rt.settings()
 ROLE=os.environ.get('SERIES_CONTROL_ROLE','web')
@@ -320,9 +321,7 @@ def cleanup(dry=False):
  if ROLE!='worker':raise PermissionError('Cleanup is restricted to worker')
  mp=rt.media_paths()
  if not rt.cleanup_enabled():
-  # Watched cleanup is strictly opt-in: a fresh install never deletes anything
-  # until the operator explicitly sets cleanup_enable=true in config.json.
-  save('cleanup-status.json',{'time':time.time(),'state':'Автоочистка отключена в config.json (cleanup_enable); удаление не выполнялось'});return
+  save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
  ok,reason=rt.storage_ready()
  if not ok:
   save('cleanup-status.json',{'time':time.time(),'state':'Хранилище не готово ('+reason+'); удаление не выполнялось'});return
@@ -343,7 +342,10 @@ def cleanup(dry=False):
    if not expected or not actual or int(expected.removeprefix('tt'))!=int(str(actual).removeprefix('tt')):raise ValueError('IMDb не совпадает / отсутствует')
    matched=match_watched(detail,watched,eps);seen={e['id'] for e in matched}
    to_unmonitor=[e['id'] for e in matched if e.get('monitored')]
-   if to_unmonitor and not dry:api('episode/monitor','PUT',{'episodeIds':to_unmonitor,'monitored':False})
+   if to_unmonitor and not dry:
+    with watch_settings.deletion_guard() as allowed:
+     if not allowed:save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
+     api('episode/monitor','PUT',{'episodeIds':to_unmonitor,'monitored':False})
    groups={}
    for e in eps:
     if e.get('episodeFileId'):groups.setdefault(e['episodeFileId'],[]).append(e)
@@ -356,16 +358,18 @@ def cleanup(dry=False):
     source=source_copy(sr['id'],fid,lp)
     record={'series':sr['title'],'episodes':[f'S{e["seasonNumber"]:02}E{e["episodeNumber"]:02}' for e in group],'fileId':fid,'bytes':lp.stat().st_size,'sourceRemoved':bool(source)}
     if not dry:
-     # Remove monitoring first; an interruption may leave files, never a re-download loop.
-     api('episode/monitor','PUT',{'episodeIds':[e['id'] for e in group],'monitored':False})
-     if source:disable_source(source)
-     # Persist the exact pending source before deleting the library file; crash recovery retries it.
-     source_id=fingerprint(source) if source else None
-     if source:
-      pending=load('pending-sources.json',[]);pending.append({'path':str(source),'fingerprint':source_id});save('pending-sources.json',pending)
-     api('episodefile/'+str(fid),'DELETE')
-     if source:unlink_media(source,source_id)
-     record['time']=time.time();log=load('deleted.json',[]);log.append(record);save('deleted.json',log[-2000:])
+     with watch_settings.deletion_guard() as allowed:
+      if not allowed:save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
+      # Remove monitoring first; an interruption may leave files, never a re-download loop.
+      api('episode/monitor','PUT',{'episodeIds':[e['id'] for e in group],'monitored':False})
+      if source:disable_source(source)
+      # Persist the exact pending source before deleting the library file; crash recovery retries it.
+      source_id=fingerprint(source) if source else None
+      if source:
+       pending=load('pending-sources.json',[]);pending.append({'path':str(source),'fingerprint':source_id});save('pending-sources.json',pending)
+      api('episodefile/'+str(fid),'DELETE')
+      if source:unlink_media(source,source_id)
+      record['time']=time.time();log=load('deleted.json',[]);log.append(record);save('deleted.json',log[-2000:])
     deleted.append(record)
   except Exception as e:errors.append({'series':sr['title'],'error':type(e).__name__});logging.warning('Cleanup skipped series %s: %s',sr['id'],type(e).__name__)
   time.sleep(.3)
@@ -374,7 +378,9 @@ def cleanup(dry=False):
   pending=load('pending-sources.json',[]);remaining=[]
   for record in pending:
    try:
-    p=safe_path(record['path'],rt.media_paths()['torrent_host']);disable_source(p);unlink_media(p,record['fingerprint'])
+    with watch_settings.deletion_guard() as allowed:
+     if not allowed:return
+     p=safe_path(record['path'],rt.media_paths()['torrent_host']);disable_source(p);unlink_media(p,record['fingerprint'])
    except Exception:remaining.append(record)
   save('pending-sources.json',remaining)
  save('cleanup-status.json',{'time':time.time(),'state':'Предпросмотр' if dry else ('Проверка завершена с ошибками' if errors else 'Проверка завершена'),'files':deleted,'errors':errors})
@@ -501,6 +507,10 @@ class Handler(sec.HardenedHandler):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    if not CFG['public_url']:self.send_error(403);return
    self.send_response(302);self.send_header('Location',CFG['public_url']+'/');self.end_headers();return
+  if self.path=='/api/watch-settings':
+   session=self.session()
+   if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
+   self.json_output(watch_settings.current());return
   if self.path=='/api/studio-order':
    session=self.session()
    if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
@@ -559,20 +569,25 @@ class Handler(sec.HardenedHandler):
  def do_POST(self):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    self.send_error(403);return
-  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke','/api/studio-order'):self.send_error(404);return
+  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke','/api/studio-order','/api/watch-settings'):self.send_error(404);return
   if not self.check_post():return
   try:
    raw=self.rfile.read(int(self.headers['Content-Length']))
    data=urllib.parse.parse_qs(raw.decode('utf-8'),keep_blank_values=True,strict_parsing=True,max_num_fields=8,errors='strict')
    if any(len(v)!=1 for v in data.values()):raise ValueError('Duplicate field')
    data={k:v[0] for k,v in data.items()}
-   fields={'/api/studio-order':{'csrf','order'},'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'},'/api/notifications/settings':{'csrf','enabled','types','show_titles'},'/api/notifications/devices':{'csrf','platform'},'/api/notifications/revoke':{'csrf','deviceId'}}
+   fields={'/api/watch-settings':{'csrf','confirm_watch','delete_watched'},'/api/studio-order':{'csrf','order'},'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'},'/api/notifications/settings':{'csrf','enabled','types','show_titles'},'/api/notifications/devices':{'csrf','platform'},'/api/notifications/revoke':{'csrf','deviceId'}}
    if set(data)!=fields[self.path]:raise ValueError('Fields do not match')
    if self.path=='/login':self.login(data);return
    s=self.session()
    if not s or not re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf','')) or not secrets.compare_digest(data.get('csrf',''),s['csrf']):
     logging.warning('Action authentication rejected: session=%s csrf_length=%s csrf_match=%s',bool(s),len(data.get('csrf','')),bool(s) and bool(re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf',''))) and secrets.compare_digest(data.get('csrf',''),s['csrf']))
     self.send_error(403);return
+   if self.path=='/api/watch-settings':
+    if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
+    if not sec.consume([('watch-settings',s['user'],12,300)]):self.send_error(429);return
+    if any(data[k] not in ('0','1') for k in ('confirm_watch','delete_watched')):raise ValueError('Invalid preference')
+    self.json_output(watch_settings.update({k:data[k]=='1' for k in ('confirm_watch','delete_watched')}));return
    if self.path=='/api/studio-order':
     if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
     if not sec.consume([('studio-order',s['user'],6,300)]):self.send_error(429);return
@@ -655,6 +670,7 @@ if __name__=='__main__':
  if ROLE=='worker':worker()
  elif ROLE=='operations':episodes.run(sys.modules[__name__])
  else:
+  watch_settings.ensure_lock()
   bind=rt.panel_bind()
   http=sec.BoundedServer((bind['host'],bind['http']),Handler);tls=sec.BoundedServer((bind['host'],bind['https']),Handler);tls.slots=http.slots
   context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.minimum_version=ssl.TLSVersion.TLSv1_2;context.load_cert_chain(bind['cert'],bind['key']);tls.socket=context.wrap_socket(tls.socket,server_side=True,do_handshake_on_connect=False)
