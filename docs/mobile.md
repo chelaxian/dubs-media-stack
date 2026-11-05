@@ -8,12 +8,12 @@
 В репозитории лежат **исходники собственных обёрток Dubs** (`mobile/`):
 
 - **Android 9+** (`minSdk 28`, `compileSdk`/`targetSdk` 36, Java 17, AGP 8.10.1):
-  WebView-обёртка панели — package **`app.dubs.panel`** (v1.3.1, versionCode 14,
+  WebView-обёртка панели — package **`app.dubs.panel`** (v1.4.0, versionCode 15,
   `mobile/android/app`) и вариант для **Android TV** — package
-  **`app.dubs.panel.tv`** (v1.5.1-tv, versionCode 9, `mobile/android/tv`;
+  **`app.dubs.panel.tv`** (v1.5.2-tv, versionCode 10, `mobile/android/tv`;
   режим навигации с пульта — `mobile/server/tv.css` подключается панелью
   как `dubs-tv`).
-- **iOS 17+** (deployment target 17.0, bundle **`app.dubs.panel`**, v1.3.0):
+- **iOS 17+** (deployment target 17.0, bundle **`app.dubs.panel`**, v1.4.0):
   минимальная обёртка (`mobile/ios`, проект XcodeGen — `project.yml`;
   компиляция использует `CODE_SIGNING_ALLOWED=NO`, затем CI подписывает
   приложение ad-hoc для установки
@@ -139,7 +139,7 @@ Android/iOS/TV, управляется клавиатурой и пультом.
 
 ## Совместимые сборки и проверка
 
-Поставляемые значения: телефон 1.3.1 (14), TV 1.5.1-tv (9), iOS 1.3.0 (13).
+Поставляемые значения: телефон 1.4.0 (15), TV 1.5.2-tv (10), iOS 1.4.0 (14).
 Общие идентификаторы по умолчанию — `app.dubs.panel` и `app.dubs.panel.tv`.
 Для обновления существующей установки оператор должен сохранить её
 applicationId/bundle ID и прежнюю подпись; менять их для обновления нельзя.
@@ -150,7 +150,7 @@ Workflow `.github/workflows/mobile-release.yml` запускается вруч�
 открытии/обновлении PR из того же репозитория; выдаёт только артефакты.
 Все jobs исключены для fork PR: подпись, secrets и артефакты им недоступны.
 Разрешения workflow — только `contents: read`; `pull_request_target` не используется.
-Для PR без inputs явно сохраняются версии телефона 14/1.3.1 и TV 9/1.5.1-tv. Его inputs имеют приоритет над repository variables
+Для PR без inputs явно сохраняются версии телефона 15/1.4.0 и TV 10/1.5.2-tv. Его inputs имеют приоритет над repository variables
 `DUBS_ANDROID_APPLICATION_ID`, `DUBS_TV_APPLICATION_ID`, `DUBS_IOS_BUNDLE_ID`.
 Телефонная Gradle-переменная `DUBS_APPLICATION_ID` получает значение первой
 из этих repository variables. Для подписи используются только secrets
@@ -164,13 +164,13 @@ iOS проходит simulator unit/UI tests, затем компилирует�
 для этого ad-hoc пакета не нужны; установка предназначена для TrollStore.
 
 CI сверяет фактический Info.plist и Mach-O: только arm64/iPhoneOS,
-MinimumOSVersion 17.0, версия 1.3.0 и build 13. Entitlements извлекаются из
+MinimumOSVersion 17.0, версия 1.4.0 и build 14. Entitlements извлекаются из
 проверенной подписи и должны содержать ровно `application-identifier` с
 фактическим bundle ID и единственную равную ему `keychain-access-groups`.
 Широких групп, team/debug/get-task-allow и push entitlements нет.
 
-В guarded `ios-artifacts` загружаются готовый `Dubs-1.3.0-TrollStore.ipa`,
-`Dubs-1.3.0-TrollStore.ipa.sha256.txt`, журнал тестов и оба entitlement plist.
+В guarded `ios-artifacts` загружаются готовый `Dubs-1.4.0-TrollStore.ipa`,
+`Dubs-1.4.0-TrollStore.ipa.sha256.txt`, журнал тестов и оба entitlement plist.
 Дополнительная подпись на Linux не требуется. Удалённой доставки нет.
 
 Проверки исходного текста и простой `javac` не заменяют сборку APK, lint,
@@ -193,3 +193,11 @@ node /path/to/repo/mobile/tests/media-details-toggle.cjs
 к серии. Остальные `mobile/tests/*.cjs` читают исходники этого checkout,
 не установленную панель. Результаты эмулятора/симулятора следует указывать
 отдельно от локальных source/browser проверок.
+
+## Элементы управления клиентом
+
+Начиная с 1.4.0, нативная верхняя панель удалена. Изменение сервера и
+управление уведомлениями доступны отдельными пунктами раздела «Настройки».
+При первом запуске адрес по-прежнему запрашивается; при сетевой ошибке
+доступно восстановление подключения и изменение сервера. Учётные данные
+не запрашиваются заново при обычном обновлении приложения на том же сервере.
