@@ -206,6 +206,8 @@ function route() {
   for (const [id, name] of [["voice-view", "voice"], ["released-view", "released"], ["upcoming-view", "upcoming"], ["settings", "settings"]]) $(id).hidden = tab !== name;
   $("empty-search").hidden = true;
   $("view-title").textContent = { voice: "Озвучка", released: "Вышедшие серии", upcoming: "Будет", settings: "Настройки" }[tab];
+  const counter = $("visible-count").closest(".counter");
+  if (counter) counter.hidden = tab === "settings";
   syncSearchVisibility();
   document.querySelector(".sync-line").hidden = tab !== "voice";
   if (tab === "voice") {
@@ -353,22 +355,20 @@ function mediaDetails(e) {
   return { toggle, panel };
 }
 function controls(e, text) {
-  var _a2, _b2, _c2;
+  var _a2, _b2;
   const box = node("div", void 0, "episode-actions");
   const media = mediaDetails(e);
-  const task = taskControls(e);
+  const task = taskControls(e, box);
+  const failed = currentTask(e)?.state === "error";
   if (((_a2 = currentTask(e)) == null ? void 0 : _a2.state) === "done") e.hasFile = true;
   if (e.future) {
-    const scheduled = ((_b2 = data == null ? void 0 : data.scheduled) == null ? void 0 : _b2[String(e.id)]) || task;
+    const scheduled = ((_b2 = data == null ? void 0 : data.scheduled) == null ? void 0 : _b2[String(e.id)]) || (!failed && task);
     const plan = node("button", scheduled ? "Запланировано" : "Запланировать", scheduled ? "quiet" : "");
     plan.type = "button";
     plan.disabled = !!scheduled;
     plan.addEventListener("click", () => downloadEpisode(e, "", plan));
     box.append(plan);
-    if (task) {
-      const cancel = task.querySelector("button");
-      box.append(cancel);
-    }
+    if (task) box.append(task);
     return box;
   }
   const download = e.hasFile && e.jellyfinUrl ? node("a", "▶ В медиатеке", "library-link") : node("button", e.hasFile ? "▶ В медиатеке" : "Скачать", e.hasFile ? "library-link" : "");
@@ -388,10 +388,10 @@ function controls(e, text) {
   find.disabled = !e.sonarrId;
   find.addEventListener("click", () => openSearch(e));
   box.append(task || download);
+  if (task && failed) box.append(download);
   if (media) box.append(media.toggle);
   box.append(find);
-  if (media && text) text.append(media.panel);
-  if (((_c2 = currentTask(e)) == null ? void 0 : _c2.state) === "error") box.append(node("small", currentTask(e).message, "download-caption"));
+  if (media) box.append(media.panel);
   const watched = node("button", "✓", "watch-button");
   watched.type = "button";
   watched.title = "Отметить просмотренной в MyShows";
@@ -421,7 +421,8 @@ function duration(sec) {
   return sec < 60 ? Math.ceil(sec) + " сек." : Math.ceil(sec / 60) + " мин.";
 }
 function progressRing(value) {
-  const wrap = node("span", void 0, "download-ring");
+  const wrap = node("button", void 0, "download-ring");
+  wrap.type = "button";
   const progress = node("progress");
   progress.max = 100;
   progress.setAttribute("aria-label", "Загружено");
@@ -449,9 +450,10 @@ function currentTask(e) {
   var _a2;
   return (_a2 = data == null ? void 0 : data.actions) == null ? void 0 : _a2[String(e.id)];
 }
-function taskControls(e) {
+const openJobDetails = new Set();
+function taskControls(e, actions) {
   const task = currentTask(e);
-  if (!task || ["done", "cancelled", "error"].includes(task.state)) return null;
+  if (!task || ["done", "cancelled"].includes(task.state)) return null;
   const box = node("span", void 0, "download-task");
   const cancel = node("button", "Отменить", "quiet");
   cancel.type = "button";
@@ -469,10 +471,26 @@ function taskControls(e) {
       cancel.disabled = false;
     }
   });
-  box.append(cancel, progressRing(task.percent));
+  if (task.state !== "error") box.append(cancel);
+  const ring = progressRing(task.percent);
+  ring.id = "job-toggle-" + e.id;
+  const panel = node("div", void 0, "job-details");
+  panel.id = "job-details-" + e.id;
+  panel.hidden = !openJobDetails.has(String(e.id));
+  ring.setAttribute("aria-label", "Состояние загрузки " + number(e) + ": " + (task.percent === void 0 ? "…" : Math.round(task.percent) + "%"));
+  ring.setAttribute("aria-expanded", String(!panel.hidden));
+  ring.setAttribute("aria-controls", panel.id);
+  ring.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+    if (panel.hidden) openJobDetails.delete(String(e.id));
+    else openJobDetails.add(String(e.id));
+    ring.setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  box.append(ring);
   let label = task.state === "queued" ? "В очереди" : task.message || "Выполняется";
   if (task.state === "downloading") label += " · ETA " + duration(task.eta) + (task.rate ? " · " + (task.rate / 1048576).toFixed(1) + " МБ/с" : "");
-  box.append(node("small", label, "download-caption"));
+  panel.append(node("div", label));
+  actions.append(panel);
   return box;
 }
 async function downloadEpisode(e, selection, button) {
@@ -734,9 +752,11 @@ function renderUpcoming() {
   count(visible.length, "серий");
 }
 function render() {
+  const focusedJob = document.activeElement?.matches(".download-ring") ? document.activeElement.id : null;
   if (tab === "released") renderReleased();
   else if (tab === "upcoming") renderUpcoming();
   else if (tab === "voice") filterVoices();
+  if (focusedJob) $(focusedJob)?.focus({ preventScroll: true });
 }
 function bytes(value) {
   if (!Number.isFinite(Number(value))) return "—";
