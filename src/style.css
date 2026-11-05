@@ -182,3 +182,4 @@ html.dubs-native-ios .toolbar{top:44px}
 html.dubs-native-ios.dubs-settings-only main{padding-top:0}
 html.dubs-native-ios.dubs-settings-only::before{display:none}
 html.dubs-native-ios.dubs-settings-only .toolbar{top:0}
+.native-client-panel>a,.native-client-panel>button{display:block;width:100%;box-sizing:border-box;text-align:left;padding:12px;margin-top:10px;border-radius:10px}

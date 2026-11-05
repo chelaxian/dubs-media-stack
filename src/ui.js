@@ -1419,3 +1419,18 @@ async function watchApproval(label) {
   }catch(error){$("schedule-status").textContent=error.message;}finally{button.disabled=false;}
  });
 }
+// Native bridges add these trusted-origin shortcuts after page load.
+// Keep them together in Settings instead of scattering client controls.
+{
+ const settings=$("settings");
+ if(settings){
+  const arrange=()=>{
+   const server=$("native-server-settings"),events=$("native-events-settings");
+   if(!server&&!events)return;
+   let panel=$("native-client-panel");
+   if(!panel){panel=node("div",undefined,"panel native-client-panel");panel.id="native-client-panel";panel.append(node("h3","Приложение"));(settings.querySelector('.settings-short')||settings).prepend(panel);}
+   for(const control of [server,events])if(control&&control.parentElement!==panel)panel.append(control);
+  };
+  new MutationObserver(arrange).observe(settings,{childList:true,subtree:true});arrange();
+ }
+}
