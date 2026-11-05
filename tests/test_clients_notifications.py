@@ -161,6 +161,14 @@ class AndroidNativeTest(unittest.TestCase):
         self.assertNotIn("FirebaseMessaging", self.sync)
         self.assertIn("UNNotificationRequest", ios)
 
+    def test_native_actions_are_settings_only(self):
+        source=read("mobile/android/app/src/main/java/app/dubs/panel/MainActivity.java")
+        self.assertNotIn('⚙ Сервер',source)
+        self.assertNotIn('🔔',source)
+        self.assertIn('native-server-settings',source)
+        self.assertIn('native-events-settings',source)
+        self.assertIn('DubsSettingsOnly/1',source)
+
     def test_build_overrides_keep_generic_defaults(self):
         self.assertIn("envOr('DUBS_APPLICATION_ID', 'app.dubs.panel')", self.gradle)
         self.assertIn("envOr('DUBS_PHONE_VERSION_CODE', '15')", self.gradle)
@@ -222,6 +230,15 @@ class IOSNativeTest(unittest.TestCase):
         self.assertLess(player.index("NSUInteger generation=EventsGeneration;"), callback)
         self.assertIn("generation!=EventsGeneration", player)
         self.assertIn("capturedOrigin isEqualToString:OriginString(self.serverURL)", player)
+
+    def test_ios_shortcuts_are_settings_only_and_recovery_remains(self):
+        source=read("mobile/ios/Dubs/main.m")
+        self.assertNotIn('⚙ Сервер',source)
+        self.assertNotIn('🔔',source)
+        self.assertIn('native-server-settings',source)
+        self.assertIn('native-events-settings',source)
+        self.assertIn('didFailProvisionalNavigation',source)
+        self.assertIn('DubsSettingsOnly/1',source)
 
     def test_plist_and_entitlements(self):
         self.assertIn("<string>1.4.0</string>", self.plist)
