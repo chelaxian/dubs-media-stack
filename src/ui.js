@@ -671,7 +671,8 @@ function renderReleased() {
       if (seasons.size > 1 && e.season !== previousSeason) {
         previousSeason = e.season;
         const members = group.episodes.filter((item) => item.season === e.season && !watchedEpisodes.has(item.id));
-        const header = node("div", void 0, "season-header");
+        const header = node("div", void 0, "episode-line season-header");
+        header.dataset.seriesId = String(group.seriesId) + ":season:" + e.season;
         header.append(node("strong", "Сезон " + e.season, "season-title"), bulkControls({ ...group, episodes: members, seasonScope: true, scopeKey: String(group.seriesId) + ":" + e.season }));
         details.append(header);
       }
@@ -690,7 +691,7 @@ function renderReleased() {
       details.append(row);
     }
     const card = node("div", void 0, "episode-card");
-    card.append(details, bulkControls({ ...group, episodes: group.episodes.filter((item) => !watchedEpisodes.has(item.id)) }));
+    card.append(bulkControls({ ...group, episodes: group.episodes.filter((item) => !watchedEpisodes.has(item.id)) }), details);
     parent.append(card);
   }
   if (!total) parent.append(node("p", (data == null ? void 0 : data.updated) ? "Новых непросмотренных серий нет" : "Загружаем список MyShows…", "muted-empty"));
