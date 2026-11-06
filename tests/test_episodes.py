@@ -29,6 +29,11 @@ class Tests(unittest.TestCase):
  def test_download_url_ssrf(self):
   for url in ['file:///etc/passwd','http://169.254.169.254/x','http://localhost:22/x','https://evil.example/torrent']:
    with self.subTest(url=url),self.assertRaises(ep.UserError):ep.safe_download(None,url)
+ def test_download_retries_transient_indexer_error(self):
+  busy=Mock(status_code=503);ok=Mock(status_code=302,headers={'Location':'magnet:?xt=urn:btih:'+'a'*40})
+  with patch.object(ep,'validate_endpoint'),patch.object(ep,'_tls_verify',return_value=True),patch.object(ep.requests,'get',side_effect=[busy,ok]) as get,patch.object(ep.time,'sleep'):
+   data,magnet=ep.safe_download(None,'http://localhost/trusted')
+  self.assertIsNone(data);self.assertIn('urn%3Abtih',magnet);self.assertEqual(get.call_count,2);busy.close.assert_called_once()
  def setUp(self):
   statvfs=patch.object(ep.os,'statvfs',return_value=types.SimpleNamespace(f_bavail=10**7,f_frsize=4096))
   statvfs.start();self.addCleanup(statvfs.stop)

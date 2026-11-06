@@ -427,10 +427,20 @@ def safe_download(m,url):
  for _ in range(4):
   if url.startswith('magnet:?'):return None,sanitize_magnet(url)
   validate_endpoint(url)
-  r=requests.get(url,allow_redirects=False,stream=True,timeout=(5,60),verify=_tls_verify(url))
+  for attempt in range(3):
+   try:
+    r=requests.get(url,allow_redirects=False,stream=True,timeout=(5,60),verify=_tls_verify(url))
+    if r.status_code not in (429,500,502,503,504):break
+    status=r.status_code;r.close()
+    if attempt==2:raise UserError('Индексатор временно недоступен (HTTP '+str(status)+'); повторите позже')
+   except (requests.exceptions.ConnectionError,requests.exceptions.Timeout):
+    if attempt==2:raise UserError('Не удалось связаться с индексатором; повторите позже')
+   time.sleep(attempt+1)
   if r.status_code in (301,302,303,307,308):
    url=urllib.parse.urljoin(url,r.headers.get('Location',''));r.close();continue
-  r.raise_for_status();data=bytearray()
+  if r.status_code>=400:
+   status=r.status_code;r.close();raise UserError('Индексатор не выдал раздачу (HTTP '+str(status)+'); проверьте доступ к трекеру')
+  data=bytearray()
   for chunk in r.iter_content(65536):
    data.extend(chunk)
    if len(data)>10*1024*1024:r.close();raise UserError('Слишком большой torrent-файл')
@@ -730,6 +740,8 @@ def process(m,key,job):
     except UserError as exc:failures.append(str(exc))
    raise UserError(failures[-1] if failures else 'Нет подходящих раздач')
  except UserError as exc:report(m,key,'cancelled' if str(exc)=='Заказ отменён' else 'error',str(exc))
+ except requests.exceptions.HTTPError as exc:
+  status=getattr(getattr(exc,'response',None),'status_code',None);logging.warning('Episode upstream HTTP error: %s',status or 'unknown');report(m,key,'error','Сервис поиска или медиатеки вернул HTTP '+str(status or 'ошибку')+'; повторите позже')
  except Exception as exc:logging.warning('Episode operation failed: %s',type(exc).__name__);report(m,key,'error','Сервис временно не выполнил задание. Повторите позже')
 
 
