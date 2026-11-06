@@ -428,14 +428,17 @@ def safe_download(m,url):
   if url.startswith('magnet:?'):return None,sanitize_magnet(url)
   validate_endpoint(url)
   for attempt in range(3):
+   status=0;retry_after=''
    try:
     r=requests.get(url,allow_redirects=False,stream=True,timeout=(5,60),verify=_tls_verify(url))
     if r.status_code not in (429,500,502,503,504):break
-    status=r.status_code;r.close()
+    status=r.status_code;retry_after=r.headers.get('Retry-After','');r.close()
     if attempt==2:raise UserError('Индексатор временно недоступен (HTTP '+str(status)+'); повторите позже')
    except (requests.exceptions.ConnectionError,requests.exceptions.Timeout):
     if attempt==2:raise UserError('Не удалось связаться с индексатором; повторите позже')
-   time.sleep(attempt+1)
+   delay=attempt+1
+   if status==429:delay=min(30,int(retry_after)) if retry_after.isdigit() else (5 if attempt==0 else 15)
+   time.sleep(delay)
   if r.status_code in (301,302,303,307,308):
    url=urllib.parse.urljoin(url,r.headers.get('Location',''));r.close();continue
   if r.status_code>=400:
@@ -492,11 +495,39 @@ def validate_metainfo(data):
  except UserError:raise
  except Exception:raise UserError('Источник не вернул корректный torrent-файл')
 
+def encode_bencode(value):
+ if isinstance(value,int):return b'i'+str(value).encode()+b'e'
+ if isinstance(value,bytes):return str(len(value)).encode()+b':'+value
+ if isinstance(value,list):return b'l'+b''.join(encode_bencode(x) for x in value)+b'e'
+ if isinstance(value,dict):return b'd'+b''.join(encode_bencode(k)+encode_bencode(value[k]) for k in sorted(value))+b'e'
+ raise ValueError('Invalid bencode')
+
+def cached_magnet_metadata(magnet):
+ """Fetch public metadata by infohash, verify identity and preserve trackers."""
+ magnet=sanitize_magnet(magnet);params=urllib.parse.parse_qs(urllib.parse.urlsplit(magnet).query)
+ raw=params['xt'][0].split(':')[-1]
+ wanted=bytes.fromhex(raw) if len(raw)==40 else base64.b32decode(raw.upper())
+ with tempfile.TemporaryDirectory(prefix='series-metacache-') as d:
+  dest=Path(d)/'meta.torrent';cmd=['curl','--fail','--silent','--show-error','--proto','=https','--max-redirs','0','--max-time','30','--max-filesize',str(10*1024*1024)]
+  proxy=rt.settings().get('proxy')
+  if proxy:cmd+=['--socks5-hostname',proxy]
+  cmd+=['--output',str(dest),'https://itorrents.net/torrent/'+wanted.hex().upper()+'.torrent']
+  result=subprocess.run(cmd,capture_output=True,timeout=35)
+  if result.returncode or not dest.is_file() or dest.stat().st_size>10*1024*1024:raise ValueError('Metadata cache unavailable')
+  meta=validate_metainfo(dest.read_bytes())
+  if hashlib.sha1(encode_bencode(meta[b'info'])).digest()!=wanted:raise ValueError('Metadata hash mismatch')
+  trackers=[x.encode() for x in params.get('tr',[])]
+  if trackers:meta[b'announce']=trackers[0];meta[b'announce-list']=[[x] for x in trackers]
+  return encode_bencode(meta)
+
 def metadata_only(m,magnet):
  with tempfile.TemporaryDirectory(prefix='series-metadata-') as d:
-  r=subprocess.run(['aria2c','--input-file=-','--bt-metadata-only=true','--bt-save-metadata=true','--follow-torrent=false','--seed-time=0','--stop=90','--summary-interval=0','--console-log-level=error','--quiet=true','--dir='+d],input=magnet+'\n',capture_output=True,text=True,timeout=100)
+  try:subprocess.run(['aria2c','--input-file=-','--bt-metadata-only=true','--bt-save-metadata=true','--follow-torrent=false','--seed-time=0','--stop=90','--summary-interval=0','--console-log-level=error','--quiet=true','--dir='+d],input=magnet+'\n',capture_output=True,text=True,timeout=100)
+  except subprocess.TimeoutExpired:pass
   torrents=list(Path(d).glob('*.torrent'))
-  if not torrents:raise UserError('Не удалось получить метаданные magnet без загрузки видео. Попробуйте другую раздачу')
+  if not torrents:
+   try:return cached_magnet_metadata(magnet)
+   except (OSError,ValueError,UserError,subprocess.TimeoutExpired):raise UserError('Не удалось получить метаданные magnet ни от пиров, ни из кеша. Попробуйте другую раздачу')
   data=torrents[0].read_bytes();validate_metainfo(data);return data
 
 def clean_file_path(name):

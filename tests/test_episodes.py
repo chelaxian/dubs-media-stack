@@ -34,6 +34,17 @@ class Tests(unittest.TestCase):
   with patch.object(ep,'validate_endpoint'),patch.object(ep,'_tls_verify',return_value=True),patch.object(ep.requests,'get',side_effect=[busy,ok]) as get,patch.object(ep.time,'sleep'):
    data,magnet=ep.safe_download(None,'http://localhost/trusted')
   self.assertIsNone(data);self.assertIn('urn%3Abtih',magnet);self.assertEqual(get.call_count,2);busy.close.assert_called_once()
+ def test_magnet_cache_verifies_exact_hash_and_preserves_trackers(self):
+  import hashlib
+  meta={b'info':{b'name':b'episode.mkv',b'length':10}}
+  data=ep.encode_bencode(meta);digest=hashlib.sha1(ep.encode_bencode(meta[b'info'])).hexdigest()
+  magnet='magnet:?xt=urn:btih:'+digest+'&tr=udp%3A%2F%2Ftracker.example%3A80%2Fannounce'
+  def fetch(cmd,**kw):
+   Path(cmd[cmd.index('--output')+1]).write_bytes(data);return types.SimpleNamespace(returncode=0)
+  with patch.object(ep.subprocess,'run',side_effect=fetch),patch.object(ep.rt,'settings',return_value={'proxy':''}):
+   result=ep.validate_metainfo(ep.cached_magnet_metadata(magnet))
+   self.assertEqual(result[b'info'],meta[b'info']);self.assertEqual(result[b'announce'],b'udp://tracker.example:80/announce')
+   with self.assertRaises(ValueError):ep.cached_magnet_metadata(magnet.replace(digest,'a'*40))
  def setUp(self):
   statvfs=patch.object(ep.os,'statvfs',return_value=types.SimpleNamespace(f_bavail=10**7,f_frsize=4096))
   statvfs.start();self.addCleanup(statvfs.stop)
