@@ -35,6 +35,7 @@ CONFIG_EXAMPLE = {
     'timezone': 'Europe/Moscow',      # schedules the daily 18:00 upgrade pass
     'owner_label': '',
     'public_url': '',                 # https URL the panel is published under
+    'jellyfin_api_url': '',           # non-secret login API base; empty uses jellyfin.json connection
     'jellyfin_url': '',               # https URL of the public Jellyfin
     'cleanup_enable': False,          # watched cleanup is opt-in; stays off on fresh installs
     'daily_upgrade_hour': 18,
@@ -91,7 +92,8 @@ def generate(config_root, force=False, torrent_host=None, shows_host=None,
     When compose storage roots are known (from compose/.env), config.json
     `paths` are seeded to match that layout so the worker/units agree with it.
     transmission.json is seeded with the SAME RPC credentials the compose
-    daemon uses (TRANSMISSION_USER/PASS), so the fresh daemon actually
+    daemon uses (TRANSMISSION_USER/PASS inputs mapped to LSIO USER/PASS),
+    so the fresh daemon actually
     requires the auth the panel sends.
     Returns (created, skipped) lists of file paths.
     """

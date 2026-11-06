@@ -1,27 +1,40 @@
 """Daily, non-destructive upgrades of downloaded, MyShows-unwatched episodes."""
 import datetime,re,secrets,time,logging
 from zoneinfo import ZoneInfo
+import studio_order
+import schedule_settings
 import runtime as rt
+import notifications
 
 def _tz():
  try:return ZoneInfo(rt.timezone_name())
  except Exception:return ZoneInfo('Europe/Moscow')
 TZ=_tz()
 
+def schedule_slot(now=None):
+ cfg=schedule_settings.current();now=now or datetime.datetime.now(TZ)
+ hour,minute=map(int,cfg['upgrade_time'].split(':'))
+ anchor=datetime.datetime(1970,1,1,hour,minute,tzinfo=TZ)
+ interval=cfg['upgrade_interval_hours']*3600
+ return anchor.timestamp()+int((now.timestamp()-anchor.timestamp())//interval)*interval
+
 def due(state,now=None):
- hour=rt.settings()['daily_upgrade_hour']
- now=now or datetime.datetime.now(TZ)
- return now.hour>=hour and state.get('day')!=now.date().isoformat()
+ cfg=schedule_settings.current();now=now or datetime.datetime.now(TZ)
+ slot=schedule_slot(now)
+ if state.get('scheduledSlot') is not None:return slot>state['scheduledSlot']
+ if state.get('started'):return slot>state['started']
+ hour,minute=map(int,cfg['upgrade_time'].split(':'))
+ return (now.hour,now.minute)>=(hour,minute) and state.get('day')!=now.date().isoformat()
 
 def voice_rank(m,sid,title,formats=()):
  prefs=m.load('preferences.json',{}).get(str(sid),{})
- order=list(range(len(m.STUDIOS)))
+ order=studio_order.indices(m.STUDIOS)
  selected=rt.resolve_studio(m.STUDIOS,prefs.get('studio'))
  if selected is not None:order.remove(selected);order.insert(0,selected)
  names={x.get('name','').split(' — ',1)[-1] for x in formats}
- hits=[i for i in order if i!=len(m.STUDIOS)-1 and re.search(m.STUDIOS[i]['pattern'],title) or m.STUDIOS[i]['name'] in names]
+ other=next(i for i,s in enumerate(m.STUDIOS) if s['name']==studio_order.CATCHALL)
+ hits=[i for i in order if (i!=other and re.search(m.STUDIOS[i]['pattern'],title)) or m.STUDIOS[i]['name'] in names]
  # The 'other Russian' studio can itself be a selected first choice.
- other=len(m.STUDIOS)-1
  if not hits:hits=[other]
  if prefs.get('mode')=='strict' and selected is not None and selected not in hits:return None
  return min(order.index(i) for i in hits)
@@ -36,6 +49,14 @@ def better(candidate,current):
 
 def current_rank(m,e,current):
  ef=current.get('episodeFile') or m.api('episodefile/'+str(current['episodeFileId']))
+ # Verified tracks override release titles: packs may advertise a dub which
+ # individual files do not actually contain. Sonarr file ids are globally unique.
+ import episodes as ep
+ cache=ep.read(m.WORKER_STATE/'local-media.json',{}) if hasattr(m,'WORKER_STATE') else {}
+ verified=[x for x in cache.get('entries',{}).values() if x.get('status')=='verified' and x.get('identity',{}).get('id')==current.get('episodeFileId') and time.time()-x.get('verifiedAt',0)<7200]
+ if len(verified)==1:
+  titles=' '.join(t.get('title') or '' for t in verified[0].get('audioTracks',[]) if t.get('language')=='rus')
+  return resolution(ef.get('quality',{})),voice_rank(m,e['seriesId'],titles)
  title=ef.get('originalFilePath') or ef.get('sceneName') or ef.get('relativePath','')
  history=m.api('history/series?seriesId='+str(e['seriesId']))
  imported=next((x for x in history if x.get('eventType')=='downloadFolderImported' and str(x.get('data',{}).get('fileId'))==str(current['episodeFileId'])),None)
@@ -76,7 +97,7 @@ def replacement_allowed(m,e,current,title,quality):
  if current.get('episodeFileId')!=e.get('_upgradeFileId'):return False
  old=current_rank(m,e,current)
  rank=(resolution(quality),voice_rank(m,e['seriesId'],title))
- return rank[1] is not None and (old[1] is None or better(rank,old))
+ return rank[1] is not None and ((old[1] is None and rank[0]>=old[0]) or (old[1] is not None and better(rank,old)))
 
 def upgrade_one(m,ep,e):
  current=m.api('episode/'+str(e['sonarrId']))
@@ -95,7 +116,7 @@ def upgrade_one(m,ep,e):
  for item in cache.get('items',[]):
   rank=candidate_rank(m,e,item)
   if not item['display']['allowed'] or rank[1] is None:continue
-  if before[1] is None or better(rank,before):candidates.append(item)
+  if (before[1] is None and rank[0]>=before[0]) or (before[1] is not None and better(rank,before)):candidates.append(item)
  candidates.sort(key=lambda x:(candidate_rank(m,e,x)[0],-candidate_rank(m,e,x)[1],x['display']['seeders']),reverse=True)
  if not candidates:
   ep.report(m,key,'done','Ежедневная проверка: улучшений пока нет');return 'no_better_release'
@@ -109,14 +130,30 @@ def upgrade_one(m,ep,e):
  return 'unavailable'
 
 def run_daily(m,ep,dry=False):
+ """Once per local date at the configured zone/hour; dry runs never journal.
+ The started/result pair is journaled honestly: an aborted run still reports
+ an error outcome and errors are never disguised as "no improvements"."""
+ try:return _run_daily(m,ep,dry)
+ except Exception:
+  if not dry:
+   day=datetime.datetime.now(TZ).date().isoformat()
+   state=ep.read(m.WORKER_STATE/'daily-upgrades.json',{})
+   if state.get('day')==day and state.get('started') and not state.get('finished'):
+    notifications.upgrade_result(day,0,1,len(state.get('results',[])))
+    state.update({'finished':time.time(),'error':True});ep.atomic(m.WORKER_STATE/'daily-upgrades.json',state,0o600)
+  raise
+
+def _run_daily(m,ep,dry=False):
  path=m.WORKER_STATE/'daily-upgrades.json';state=ep.read(path,{})
  if not dry and not due(state):return
+ day=datetime.datetime.now(TZ).date().isoformat()
+ result={'day':day,'scheduledSlot':schedule_slot(),'started':time.time(),'timezone':str(TZ),'results':[]}
+ if not dry:
+  ep.atomic(path,result,0o600)
+  notifications.upgrade_started(day)
  ep.refresh(m,True)
  snapshot=ep.read(m.WORKER_STATE/'myshows-episodes.json',{})
  if snapshot.get('error') or time.time()-snapshot.get('updated',0)>300:raise RuntimeError('Fresh MyShows snapshot required')
- day=datetime.datetime.now(TZ).date().isoformat()
- result={'day':day,'started':time.time(),'timezone':str(TZ),'results':[]}
- if not dry:ep.atomic(path,result,0o600)
  for group in snapshot.get('released',[]):
   for e in group['episodes']:
    if not e.get('hasFile') or not e.get('sonarrId') or e.get('future'):continue
@@ -130,5 +167,9 @@ def run_daily(m,ep,dry=False):
    result['results'].append({'episode':e['id'],'series':e['seriesTitle'],'season':e['season'],'number':e['number'],'status':status})
    if not dry:ep.atomic(path,result,0o600)
  result['finished']=time.time()
- if not dry:ep.atomic(path,result,0o600)
+ if not dry:
+  ep.atomic(path,result,0o600)
+  found=sum(1 for x in result['results'] if x['status']=='downloading')
+  errors=sum(1 for x in result['results'] if x['status'] in ('unavailable','error_existing_file_preserved'))
+  notifications.upgrade_result(day,found,errors,len(result['results']))
  return result

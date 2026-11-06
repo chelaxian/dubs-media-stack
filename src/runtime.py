@@ -16,7 +16,7 @@ Environment overrides (all optional):
 
 The module never contains deployment addresses and never logs secrets.
 """
-import json, os, secrets, threading
+import json, os, re, secrets, threading
 from pathlib import Path
 
 _LOCK = threading.RLock()
@@ -71,6 +71,7 @@ def _settings_uncached():
         'timezone': cfg.get('timezone') or os.environ.get('SERIES_CONTROL_TIMEZONE', 'Europe/Moscow'),
         'owner_label': cfg.get('owner_label') or cfg.get('login') or 'Owner',
         'public_url': (cfg.get('public_url') or '').rstrip('/'),   # https://panel.example.com
+        'jellyfin_api_url': cfg.get('jellyfin_api_url', ''),  # non-secret login/logout transport; empty = connection fallback
         'jellyfin_url': (cfg.get('jellyfin_url') or '').rstrip('/'),  # https://jellyfin.example.com
         'mobile': cfg.get('mobile') or {},                     # {"artifacts":[{"file","label"}]}
         'paths': dict(cfg.get('paths') or {}),                 # host/container media roots
@@ -134,6 +135,28 @@ def indexer_endpoints():
     return {h:{'ports':v['ports'],'prefixes':v['prefixes'],
                'tls':{k:sorted(vv) for k,vv in v['tls'].items()}} for h,v in allowed.items()}
 
+def jellyfin_api_base():
+    """Non-secret login transport, independent of the private metadata identity.
+
+    Empty keeps portable installs using their configured Jellyfin connection.
+    An explicit invalid URL fails closed, without reading that private file.
+    """
+    from urllib.parse import urlsplit
+    base = settings().get('jellyfin_api_url', '')
+    if base == '' or base is None:
+        base = connection('jellyfin')['base_url']
+    if not isinstance(base, str) or not base or any(ord(c) <= 32 or ord(c) == 127 for c in base) or '\\' in base:
+        raise ValueError('Invalid Jellyfin API base URL')
+    parsed = urlsplit(base)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or '?' in base or '#' in base or not parsed.netloc
+            or '%' in parsed.netloc):
+        raise ValueError('Invalid Jellyfin API base URL')
+    if parsed.port is not None and not 1 <= parsed.port <= 65535:
+        raise ValueError('Invalid Jellyfin API port')
+    return base.rstrip('/')
+
 def connection(name):
     """Service connection config: accepts {"base_url","key"} or legacy {"port","key"}."""
     cfg = load_json(config_root()/(name+'.json'), required=True)
@@ -149,6 +172,20 @@ def panel_bind():
         'key':p.get('key') or str(config_root()/'server.key'),
     }
 
+# Anchored package names only: unknown configured families remain available.
+_MOBILE_PACKAGE = re.compile(
+    r'(?P<client>Dubs|Dubs-TV|DubsTV|Swiftfin|Findroid|FindroidTV|Findroid-Dubs|Findroid-Dubs-TV)-'
+    r'(?P<version>[0-9]+(?:\.[0-9]+)+)(?P<variant>(?:-[A-Za-z0-9_]+)*)'
+    r'(?P<platform>\.apk|\.ipa)\Z')
+
+def _mobile_release(name):
+    match = _MOBILE_PACKAGE.fullmatch(name)
+    if not match:return None
+    version = tuple(int(part) for part in match['version'].split('.'))
+    # 1.5 and 1.5.0 are semantically equal.
+    while version and version[-1] == 0:version = version[:-1]
+    return (match['client'], match['variant'], match['platform']), version
+
 def mobile_artifacts():
     """Only artifacts explicitly configured AND present in the releases dir are offered."""
     out = []
@@ -160,10 +197,19 @@ def mobile_artifacts():
         try:
             if p.is_file() and not p.is_symlink():out.append({'file':name,'label':item.get('label') or name})
         except OSError:continue
-    return out
+    latest = {}
+    for item in out:
+        release = _mobile_release(item['file'])
+        if release:
+            family, version = release
+            latest[family] = max(latest.get(family, ()), version)
+    # Preserve configuration order and metadata; selection also feeds /apps allowlist.
+    return [item for item in out if (release := _mobile_release(item['file'])) is None
+            or release[1] == latest[release[0]]]
 
 def cleanup_enabled():
-    return settings()['cleanup_enable']
+    import watch_settings
+    return watch_settings.current()['delete_watched']
 
 def resolve_studio(studios, value):
     """Current index of a preferred studio.

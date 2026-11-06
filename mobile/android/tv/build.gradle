@@ -1,10 +1,24 @@
 plugins { id 'com.android.application' }
+// TV overrides: DUBS_TV_APPLICATION_ID / DUBS_TV_VERSION_CODE / DUBS_TV_VERSION_NAME
+// from the private build environment; generic defaults live here.
+def envOr = { String key, String fallback ->
+ def value = System.getenv(key)
+ (value != null && !value.trim().isEmpty()) ? value.trim() : fallback
+}
 android {
  namespace 'app.dubs.panel'
  compileSdk 36
- defaultConfig { applicationId 'app.dubs.panel.tv'; minSdk 28; targetSdk 36; versionCode 7; versionName '1.4.0-tv' }
+ buildToolsVersion '36.0.0'
+ defaultConfig {
+  applicationId = envOr('DUBS_TV_APPLICATION_ID', 'app.dubs.panel.tv')
+  minSdk = 28
+  targetSdk = 36
+  versionCode = envOr('DUBS_TV_VERSION_CODE', '10').toInteger()
+  versionName = envOr('DUBS_TV_VERSION_NAME', '1.5.2-tv')
+ }
  sourceSets { main { java.srcDirs = ['../app/src/main/java']; res.srcDirs = ['../app/src/main/res','src/main/res'] } }
- signingConfigs { release { storeFile file(System.getenv('DUBS_KEYSTORE') ?: '/tmp/dubs-signing.p12'); storePassword System.getenv('DUBS_SIGNING_PASSWORD'); keyAlias 'dubs'; keyPassword System.getenv('DUBS_SIGNING_PASSWORD'); storeType 'PKCS12' } }
+
+ signingConfigs { release { storeFile file(System.getenv('DUBS_KEYSTORE') ?: '/tmp/dubs-signing.p12'); storePassword (System.getenv('DUBS_SIGNING_PASSWORD') ?: ''); keyAlias = envOr('DUBS_KEY_ALIAS', 'dubs'); keyPassword (System.getenv('DUBS_SIGNING_PASSWORD') ?: ''); storeType 'PKCS12' } }
  buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false } }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

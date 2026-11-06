@@ -151,16 +151,22 @@ sudo python3 -m installer bootstrap
 Bootstrap **сам запустит остановленный фид** `dubs-myshows-feed` и проверит,
 что `/health` отдаёт валидный JSON; если фид недоступен — откажется что-либо
 создавать (Sonarr валидирует фид при создании импорт-листа) и напечатает, как
-его проверить. `--feed-url http://host:port` переопределяет адрес фида.
+его проверить. `--feed-url http://host:port` переопределяет базовый адрес фида.
+В Custom List записывается `http://host:port/series`: Sonarr запрашивает
+указанный URL напрямую, а `/health` используется для проверки доступности.
 
 Через schema-API приложений создаёт/обновляет **только объекты с управляемыми
 именами**: профили «Dubs RU 2160p/1080p» (1080/2160, `upgradeAllowed=false` —
 качество поднимает только ежедневный проход панели в 18:00), форматы
 «Озвучка NN — …» по `studios.json` (13 именованных студий + fallback-запись),
-RU-veto, клиент «Dubs Transmission» с категориями `dubs-tv`/`dubs-movies`/`dubs-music`,
+RU-veto, клиент «Dubs Transmission» с отдельными каталогами загрузки
+`/downloads/complete/tv`, `/downloads/complete/movies`, `/downloads/complete/music`
+для Sonarr, Radarr и Lidarr соответственно. Поля Category очищены: Transmission
+не допускает одновременно Category и Directory. Каталоги разделяют назначения
+загрузок и очереди приложений. Сохраняются
 remote-path mapping `transmission: /downloads/ → /torrents/`, приложения
 «Sonarr/Radarr/Lidarr (Dubs)» в Prowlarr, профиль индексаторов «Dubs»
-(minimumSeeders = 3) и импорт-лист «MyShows watching (Dubs feed)»
+(minimumSeeders = 1) и импорт-лист «MyShows watching (Dubs feed)»
 (только **будущие** эпизоды: `shouldMonitor=future`, `monitorNewItems=all`,
 без бэклога, root folder `/tv`). Radarr получает ту же полную политику озвучки;
 Lidarr работает через API v1 с музыкальными профилями — без сериальных

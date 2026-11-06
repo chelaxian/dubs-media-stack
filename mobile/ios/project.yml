@@ -20,7 +20,20 @@ targets:
         TARGETED_DEVICE_FAMILY: '1,2'
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Dubs/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Dubs/Dubs.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  DubsTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [DubsTests]
+    dependencies:
+      - target: Dubs
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.dubs.panel.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Dubs.app/Dubs
+        BUNDLE_LOADER: $(TEST_HOST)
   DubsUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -38,5 +51,6 @@ schemes:
       targets:
         Dubs: all
         DubsUITests: [test]
+        DubsTests: [test]
     test:
-      targets: [DubsUITests]
+      targets: [DubsTests, DubsUITests]

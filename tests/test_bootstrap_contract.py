@@ -17,7 +17,7 @@ SONARR_FIXTURES = Path('/tmp/dubs-real-schema-examples.json')
 LIDARR_FIXTURE = Path('/tmp/dubs-lidarr-schema.json')
 STUDIOS = json.loads((REPO / 'studios.json').read_text())
 VETO = 'ОБЯЗАТЕЛЬНО RU — запрет без русского'
-FEED = 'http://panel.test/myshows.feed'
+FEED = 'http://panel.test'
 FIX_OK = SONARR_FIXTURES.exists() and LIDARR_FIXTURE.exists()
 
 BASES = {'sonarr': 'http://sonarr.test', 'radarr': 'http://radarr.test',
@@ -56,10 +56,20 @@ class FakeStack:
         }
         self.state = {app: {} for app in BASES}
         self.calls = []  # (app, method, path, data)
+        # Captured quality objects carry the same Quality resource shape as
+        # GET qualitydefinition (id is the QUALITY id, not definition row id).
+        def leaves(item):
+            if item.get('quality'):
+                yield item['quality']
+            for child in item.get('items') or []:
+                yield from leaves(child)
+        for app in ('sonarr', 'radarr'):
+            for quality in leaves(f[app]['qualityprofile']):
+                self.add(app, 'qualitydefinition', {'quality': quality})
         # Fresh-install seeds: Lidarr/Prowlarr ship default objects.
         self.add('lidarr', 'qualityprofile', {'name': 'Any'})
         self.add('lidarr', 'metadataprofile', {'name': 'Standard'})
-        self.add('prowlarr', 'indexerprofile',
+        self.add('prowlarr', 'appprofile',
                  {'name': 'Standard', 'enableRss': True,
                   'enableAutomaticSearch': False, 'enableInteractiveSearch': False,
                   'minimumSeeders': 1})
@@ -87,6 +97,23 @@ class FakeStack:
                 return 404, {'error': 'no schema for %s' % path}
             return 200, copy.deepcopy(schema)
         collection, _, rest = path.partition('/')
+        if app == 'prowlarr':
+            # Official API v1: AppProfileResource and IndexerResource.appProfileId.
+            if collection not in ('appprofile', 'applications', 'indexer'):
+                return 404, {}
+            if collection == 'appprofile' and method in ('POST', 'PUT'):
+                expected = {'name', 'enableRss', 'enableAutomaticSearch',
+                            'enableInteractiveSearch', 'minimumSeeders'}
+                if rest:
+                    expected.add('id')
+                if set(data) != expected:
+                    return 400, {'error': 'invalid AppProfileResource fields'}
+        if collection == 'downloadclient' and method in ('POST', 'PUT'):
+            fields = {f['name']: f.get('value') for f in data.get('fields', [])}
+            for prefix in ('tv', 'movie', 'music'):
+                if fields.get(prefix + 'Category') and fields.get(prefix + 'Directory'):
+                    return 400, [{'propertyName': prefix.title() + 'Category',
+                                  'errorMessage': 'Cannot use Category and Directory'}]
         if rest:
             obj_id = int(rest)
             items = self.state[app].get(collection, [])
@@ -142,10 +169,10 @@ def default_conn(stack, lidarr_extra=None, with_radarr=True):
     return conn
 
 
-def run_bootstrap(stack, conn=None):
+def run_bootstrap(stack, conn=None, feed_url=FEED):
     with patch.object(bs.requests, 'request', side_effect=stack.request):
         return bs.bootstrap(Dep(conn or default_conn(stack)),
-                            copy.deepcopy(STUDIOS), VETO, FEED)
+                            copy.deepcopy(STUDIOS), VETO, feed_url)
 
 
 def field(client_payload, name):
@@ -180,7 +207,7 @@ class BootstrapContractTests(unittest.TestCase):
         stack = FakeStack()
         report = run_bootstrap(stack)
         payload = stack.posted('sonarr', 'importlist')[0]
-        self.assertEqual(field(payload, 'baseUrl'), FEED)
+        self.assertEqual(field(payload, 'baseUrl'), FEED + '/series')
         self.assertEqual(payload['shouldMonitor'], 'future')
         self.assertEqual(payload['monitorNewItems'], 'all')
         self.assertFalse(payload['searchForMissingEpisodes'])
@@ -195,9 +222,77 @@ class BootstrapContractTests(unittest.TestCase):
         managed = next(l for l in stack.objects('sonarr', 'importlist')
                        if l['name'] == 'MyShows watching (Dubs feed)')
         upd = stack.puts('sonarr', 'importlist/%d' % managed['id'])[0]
+        self.assertEqual(field(upd, 'baseUrl'), FEED + '/series')
         self.assertEqual(upd['shouldMonitor'], 'future')
         self.assertEqual(upd['monitorNewItems'], 'all')
         self.assertEqual(upd['rootFolderPath'], '/tv')
+
+    def test_custom_import_url_fetches_real_feed_on_create_and_update(self):
+        # Sonarr CustomImportProxy GETs BaseUrl.TrimEnd('/') directly; it
+        # does not append the /api/v3/series route used by SonarrImport.
+        import tempfile
+        import urllib.error
+        import urllib.request
+        from types import SimpleNamespace
+        import _dubs_env  # noqa: F401
+        import myshows_feed
+        from integration_smoke import feed_server
+
+        with tempfile.TemporaryDirectory(prefix='dubs-list-contract-') as tmp:
+            with patch.object(myshows_feed, 'STATE', Path(tmp)):
+                srv, base = feed_server(SimpleNamespace(feed_state=Path(tmp) / 'feed'),
+                                        '127.0.0.1')
+                self.addCleanup(srv.server_close)
+                self.addCleanup(srv.shutdown)
+                with urllib.request.urlopen(base + '/health', timeout=5) as response:
+                    self.assertIsInstance(json.load(response), dict)
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(base, timeout=5)
+                self.assertEqual(ctx.exception.code, 404)
+
+                stack = FakeStack()
+                handle = stack.handle
+
+                def validate_list(app, method, path, data):
+                    if app == 'sonarr' and method in ('POST', 'PUT') and (
+                            path == 'importlist' or path.startswith('importlist/')):
+                        # Perform the real HTTP request Sonarr uses to validate
+                        # the list; no test-connection bypass or fake root route.
+                        with urllib.request.urlopen(field(data, 'baseUrl').rstrip('/'),
+                                                    timeout=5) as response:
+                            self.assertEqual(json.load(response), [])
+                    return handle(app, method, path, data)
+
+                with patch.object(stack, 'handle', side_effect=validate_list):
+                    report = run_bootstrap(stack, feed_url=base)
+                    report2 = run_bootstrap(stack, feed_url=base + '/')
+                self.assertEqual(report2['import_list'], report['import_list'])
+                self.assertEqual(len(stack.posted('sonarr', 'importlist')), 1)
+
+    def test_quality_definitions_override_profile_names_and_missing_resolution(self):
+        stack = FakeStack()
+        schema = stack.schemas['sonarr']['qualityprofile/schema']
+        schema['items'] = [
+            {'quality': {'id': 3, 'name': 'misleading-720p'}, 'allowed': False},
+            {'quality': {'id': 999, 'name': 'invented-2160p'}, 'allowed': True},
+            {'id': 1234, 'items': [
+                {'quality': {'id': 3, 'name': 'WEBDL-1080p'}},
+                {'quality': {'id': 0, 'name': 'Unknown'}}], 'allowed': True},
+            {'quality': {'id': 10, 'name': 'Raw-HD'}, 'allowed': True},
+        ]
+        run_bootstrap(stack)
+        profile = next(p for p in stack.objects('sonarr', 'qualityprofile')
+                       if p['name'] == 'Dubs RU 2160p')
+        self.assertEqual([i['allowed'] for i in profile['items']],
+                         [True, False, False, False])
+        self.assertEqual(profile['cutoff'], 3)
+
+    def test_quality_profile_fails_closed_without_quality_definitions(self):
+        stack = FakeStack()
+        stack.state['sonarr']['qualitydefinition'] = []
+        with self.assertRaisesRegex(bs.ArrError, 'no qualities'):
+            run_bootstrap(stack)
+        self.assertFalse(stack.posted('sonarr', 'qualityprofile'))
 
     # 2. Radarr: same 14-studio base family + identical scores --------------
 
@@ -284,7 +379,7 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertFalse([c for c in lidarr_writes if 'customformat' in c[2]])
         client = stack.posted('lidarr', 'downloadclient')[0]
         self.assertEqual(client['implementation'], 'Transmission')
-        self.assertEqual(field(client, 'musicCategory'), 'dubs-music')
+        self.assertEqual(field(client, 'musicCategory'), '')
         self.assertEqual(field(client, 'musicDirectory'), '/downloads/complete/music')
 
     def test_lidarr_creates_default_from_schema_only_when_empty(self):
@@ -336,9 +431,9 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertEqual(puts[0].get('defaultMetadataProfileId'), 1)  # was unset
         self.assertEqual(puts[0].get('defaultMonitorOption'), 'none')  # "as needed"
 
-    # 4. Unique categories ----------------------------------------------------
+    # 4. Unique explicit download directories ----------------------------------------------------
 
-    def test_unique_categories_and_managed_client_name(self):
+    def test_unique_directories_and_managed_client_name(self):
         stack = FakeStack()
         run_bootstrap(stack)
         categories = {}
@@ -352,33 +447,56 @@ class BootstrapContractTests(unittest.TestCase):
                              '/downloads/complete/%s'
                              % {'sonarr': 'tv', 'radarr': 'movies',
                                 'lidarr': 'music'}[app])
-        self.assertEqual(categories, {'sonarr': 'dubs-tv',
-                                      'radarr': 'dubs-movies',
-                                      'lidarr': 'dubs-music'})
+        self.assertEqual(categories, dict.fromkeys(('sonarr', 'radarr', 'lidarr'), ''))
 
     # 5. Prowlarr managed indexer profile (minimumSeeders lives here) ---------
 
+    def test_prowlarr_rejects_nonexistent_profile_route(self):
+        stack = FakeStack()
+        with patch.object(bs.requests, 'request', side_effect=stack.request):
+            with self.assertRaisesRegex(bs.ArrError, 'HTTP 404'):
+                bs.Arr('prowlarr', BASES['prowlarr'], 'key').call('indexerprofile')
+
     def test_prowlarr_managed_indexer_profile_minimum_seeders(self):
         stack = FakeStack()
+        user_id = stack.add('prowlarr', 'appprofile', {
+            'name': 'My profile', 'enableRss': False,
+            'enableAutomaticSearch': True, 'enableInteractiveSearch': False,
+            'minimumSeeders': 17})
+        stack.add('prowlarr', 'indexer', {'name': 'My tracker',
+                                        'appProfileId': user_id, 'enable': True})
+        before_profiles = stack.objects('prowlarr', 'appprofile')
+        before_indexers = stack.objects('prowlarr', 'indexer')
         report = run_bootstrap(stack)
-        created = stack.posted('prowlarr', 'indexerprofile')[0]
+        created = stack.posted('prowlarr', 'appprofile')[0]
         self.assertEqual(created['name'], 'Dubs')
-        self.assertEqual(created['minimumSeeders'], 3)
+        self.assertEqual(created['minimumSeeders'], 1)
         self.assertTrue(created['enableRss'])
         self.assertTrue(created['enableAutomaticSearch'])
         self.assertTrue(created['enableInteractiveSearch'])
-        managed = next(p for p in stack.objects('prowlarr', 'indexerprofile')
+        managed = next(p for p in stack.objects('prowlarr', 'appprofile')
                        if p['name'] == 'Dubs')
         self.assertEqual(report['prowlarr_indexer_profile'],
                          {'name': 'Dubs', 'id': managed['id'],
-                          'minimumSeeders': 3})
+                          'minimumSeeders': 1})
         self.assertNotIn('qualityprofile', stack.state['prowlarr'])
-        # Standard is never touched; re-run updates only the managed profile.
-        run_bootstrap(stack)
-        self.assertFalse(stack.puts('prowlarr', 'indexerprofile/1'))
-        self.assertEqual(stack.puts('prowlarr', 'indexerprofile/%d'
-                                    % managed['id'])[0]['minimumSeeders'], 3)
-        standard = stack.objects('prowlarr', 'indexerprofile')[0]
+        # Re-run repairs a stale managed profile without changing user objects.
+        stored = next(p for p in stack.state['prowlarr']['appprofile']
+                      if p['id'] == managed['id'])
+        stored.update(minimumSeeders=99, enableRss=False)
+        report2 = run_bootstrap(stack)
+        self.assertEqual(report2['prowlarr_indexer_profile'],
+                         report['prowlarr_indexer_profile'])
+        self.assertEqual(stack.objects('prowlarr', 'appprofile')[:-1], before_profiles)
+        self.assertEqual(stack.objects('prowlarr', 'indexer'), before_indexers)
+        self.assertEqual(len(stack.posted('prowlarr', 'appprofile')), 1)
+        repaired = stack.objects('prowlarr', 'appprofile')[-1]
+        self.assertTrue(repaired['enableRss'])
+        self.assertEqual(repaired['minimumSeeders'], 1)
+        self.assertFalse(stack.puts('prowlarr', 'appprofile/1'))
+        self.assertEqual(stack.puts('prowlarr', 'appprofile/%d'
+                                    % managed['id'])[0]['minimumSeeders'], 1)
+        standard = stack.objects('prowlarr', 'appprofile')[0]
         self.assertEqual(standard['minimumSeeders'], 1)
 
     # 6. No silent overwrites; managed clone refresh --------------------------
@@ -473,6 +591,132 @@ class BootstrapContractTests(unittest.TestCase):
                          ('transmission', '/downloads/', '/torrents/'))
         run_bootstrap(stack)
         self.assertEqual(len(stack.posted('sonarr', 'remotepathmapping')), 1)
+
+
+class TransmissionValidationTests(unittest.TestCase):
+    """Always run, including CI without the optional /tmp schema captures."""
+
+    def stack(self, app, prefix):
+        stack = object.__new__(FakeStack)
+        stack.calls = []
+        stack.state = {app: {}}
+        stack.schemas = {app: {'downloadclient/schema': [{
+            'implementation': 'Transmission', 'configContract': 'TransmissionSettings',
+            'fields': [{'name': name, 'value': value} for name, value in (
+                ('host', 'localhost'), ('port', 9091), ('username', ''),
+                ('password', ''), (prefix + 'Category', 'schema-default'),
+                (prefix + 'Directory', ''))]}]}}
+        return stack
+
+    def test_api_validator_rejects_category_and_directory_on_create_and_update(self):
+        for app, prefix in (('sonarr', 'tv'), ('radarr', 'movie'), ('lidarr', 'music')):
+            with self.subTest(app=app):
+                stack = self.stack(app, prefix)
+                payload = {'implementation': 'Transmission', 'fields': [
+                    {'name': prefix + 'Category', 'value': 'dubs-media'},
+                    {'name': prefix + 'Directory', 'value': '/downloads/complete/tv'}]}
+                for method, path in (('POST', 'downloadclient'), ('PUT', 'downloadclient/1')):
+                    status, errors = stack.handle(app, method, path, payload)
+                    self.assertEqual(status, 400)
+                    self.assertEqual(errors[0]['errorMessage'], 'Cannot use Category and Directory')
+                self.assertFalse(stack.objects(app, 'downloadclient'))
+
+    def test_directory_mode_clears_schema_category_and_updates_only_managed_client(self):
+        for app, prefix, folder in (('sonarr', 'tv', 'tv'), ('radarr', 'movie', 'movies'),
+                                    ('lidarr', 'music', 'music')):
+            with self.subTest(app=app):
+                stack = self.stack(app, prefix)
+                stack.add(app, 'downloadclient', {'name': 'My Transmission',
+                          'implementation': 'Transmission', 'fields': [
+                              {'name': prefix + 'Category', 'value': 'user-media'}]})
+                before = stack.objects(app, 'downloadclient')[0]
+                arr = bs.Arr(app, BASES[app], 'offline-key')
+                directory = '/downloads/complete/' + folder
+                with patch.object(bs.requests, 'request', side_effect=stack.request):
+                    first = arr.ensure_transmission_client('Dubs Transmission',
+                        prefix + 'Category', prefix + 'Directory', '', directory,
+                        'daemon-user', 'daemon-password')
+                    # Reproduce a previously stored draft payload; migrate only
+                    # our managed client away from contradictory settings.
+                    managed = stack.state[app]['downloadclient'][1]
+                    next(f for f in managed['fields']
+                         if f['name'] == prefix + 'Category')['value'] = 'dubs-media'
+                    second = arr.ensure_transmission_client('Dubs Transmission',
+                        prefix + 'Category', prefix + 'Directory', '', directory,
+                        'daemon-user', 'daemon-password')
+                self.assertEqual(first, second)
+                clients = stack.objects(app, 'downloadclient')
+                self.assertEqual(clients[0], before)
+                self.assertEqual(len(clients), 2)
+                self.assertEqual(field(clients[1], prefix + 'Category'), '')
+                self.assertEqual(field(clients[1], prefix + 'Directory'), directory)
+                self.assertEqual(field(clients[1], 'username'), 'daemon-user')
+                self.assertEqual(field(clients[1], 'password'), 'daemon-password')
+
+    def test_bootstrap_rejects_contradictory_routing_before_api_call(self):
+        arr = bs.Arr('sonarr', BASES['sonarr'], 'offline-key')
+        with patch.object(arr, 'call') as call:
+            with self.assertRaises(bs.ArrError):
+                arr.ensure_transmission_client('Dubs Transmission', 'tvCategory',
+                    'tvDirectory', 'dubs-tv', '/downloads/complete/tv')
+            call.assert_not_called()
+
+
+class SmokeQualityAuthContractTests(unittest.TestCase):
+    def test_selected_groups_check_every_leaf_using_definition_quality_ids(self):
+        from integration_smoke import profile_resolutions
+        definitions = {3: {'id': 3, 'name': 'WEBDL-1080p', 'resolution': 1080},
+                       0: {'id': 0, 'name': 'Unknown', 'resolution': 0},
+                       10: {'id': 10, 'name': 'Raw-HD', 'resolution': 1080},
+                       4: {'id': 4, 'name': 'HDTV-720p', 'resolution': 720}}
+        profile = {'items': [
+            {'quality': {'id': 0}, 'allowed': False},
+            {'quality': {'id': 10}, 'allowed': False},
+            {'allowed': True, 'items': [
+                {'quality': {'id': 3}, 'allowed': False}]}]}
+        self.assertEqual(profile_resolutions(profile, definitions), [1080])
+        # Enabled Unknown, Raw-HD and unmapped IDs remain visible as failures,
+        # including foreign leaves within an enabled group.
+        for quality_id in (0, 10, 999):
+            profile['items'][-1]['items'].append({'quality': {'id': quality_id}})
+            self.assertIn(0, profile_resolutions(profile, definitions))
+            profile['items'][-1]['items'].pop()
+        profile['items'][-1]['items'].append({'quality': {'id': 4}})
+        self.assertIn(720, profile_resolutions(profile, definitions))
+
+    def test_transmission_bad_auth_requires_valid_csrf_and_401(self):
+        from test_smoke_entrypoint import load_flagged
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        cls = load_flagged().IntegrationSmoke
+        case = cls('test_04_transmission_daemon_accepts_generated_credentials')
+        case.stack = SimpleNamespace(transmission_user='test-user',
+                                     transmission_pass='test-password')
+        session = Mock()
+        session.post.side_effect = [
+            Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
+            Mock(status_code=200, json=lambda: {'result': 'success'})]
+        case.requests = Mock()
+        case.requests.Session.return_value = session
+        case.requests.post.return_value = Mock(status_code=401)
+        case.test_04_transmission_daemon_accepts_generated_credentials()
+        self.assertEqual(case.requests.post.call_args.kwargs['headers'],
+                         {'X-Transmission-Session-Id': 'valid-token'})
+        self.assertEqual(case.requests.post.call_args.kwargs['auth'],
+                         ('test-user', 'wrong'))
+        unauthenticated = case.requests.post.call_args_list[0].kwargs
+        self.assertNotIn('auth', unauthenticated)
+        self.assertEqual(unauthenticated['headers'],
+                         {'X-Transmission-Session-Id': 'valid-token'})
+        # Neither a CSRF challenge nor an unauthenticated success proves auth.
+        for rejected_status in (409, 200):
+            session.post.side_effect = [
+                Mock(status_code=409, headers={'X-Transmission-Session-Id': 'valid-token'}),
+                Mock(status_code=200, json=lambda: {'result': 'success'})]
+            case.requests.post.side_effect = [Mock(status_code=401),
+                                              Mock(status_code=rejected_status)]
+            with self.assertRaises(AssertionError):
+                case.test_04_transmission_daemon_accepts_generated_credentials()
 
 
 if __name__ == '__main__':

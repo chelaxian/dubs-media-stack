@@ -84,8 +84,43 @@ class ComposeConfigTests(unittest.TestCase):
 
  def test_transmission_rpc_credentials_env(self):
   env = self.services['transmission']['environment']
-  self.assertEqual(env['TRANSMISSION_USER'], '${TRANSMISSION_USER:-}')
-  self.assertEqual(env['TRANSMISSION_PASS'], '${TRANSMISSION_PASS:-}')
+  self.assertEqual(env['USER'],
+                   '${TRANSMISSION_USER:?Transmission RPC username is required}')
+  self.assertEqual(env['PASS'],
+                   '${TRANSMISSION_PASS:?Transmission RPC password is required}')
+  self.assertNotIn('TRANSMISSION_USER', env)
+  self.assertNotIn('TRANSMISSION_PASS', env)
+  self.assertEqual(env['PUID'], '${PUID:-1000}')
+  self.assertEqual(env['PGID'], '${PGID:-1000}')
+  for name, service in self.services.items():
+   if name != 'transmission':
+    self.assertNotIn('PASS', service.get('environment', {}))
+
+ def test_generated_credentials_match_config_json_and_stay_private(self):
+  import contextlib
+  import io
+  import tempfile
+  import _dubs_env  # noqa: F401
+  from installer import cli, configgen
+  with tempfile.TemporaryDirectory(prefix='dubs-compose-credentials-') as tmp:
+   root = Path(tmp)
+   env_path = root / '.env'
+   output = io.StringIO()
+   with contextlib.redirect_stdout(output):
+    cli._ensure_transmission_credentials(env_path)
+    env = cli.read_env(env_path)
+    configgen.generate(root / 'config',
+                       transmission_user=env['TRANSMISSION_USER'],
+                       transmission_pass=env['TRANSMISSION_PASS'])
+   config_path = root / 'config' / 'transmission.json'
+   config = json.loads(config_path.read_text())
+   for input_key, json_key in (('TRANSMISSION_USER', 'user'),
+                                ('TRANSMISSION_PASS', 'password')):
+    self.assertTrue(bool(env[input_key]), 'credential must be nonempty')
+    self.assertTrue(config[json_key] == env[input_key], 'credential parity')
+    self.assertNotIn(env[input_key], output.getvalue())
+   self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
+   self.assertEqual(config_path.stat().st_mode & 0o777, 0o640)
 
  def test_no_host_network_and_no_docker_sock(self):
   text = COMPOSE.read_text()

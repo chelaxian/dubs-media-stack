@@ -223,6 +223,24 @@ def feed_server(stack, gateway):
     return srv, 'http://%s:%d' % (gateway, srv.server_port)
 
 
+def profile_resolutions(profile, definitions):
+    """Read selected top-level items; an allowed group enables ALL its leaves."""
+    from installer.bootstrap import quality_resolution
+
+    def leaves(item):
+        if item.get('quality'):
+            yield quality_resolution(item['quality'], definitions)
+        else:
+            children = item.get('items') or []
+            if not children:
+                raise AssertionError('allowed quality group has no leaves')
+            for child in children:
+                yield from leaves(child)
+
+    return [resolution for item in profile.get('items') or [] if item.get('allowed')
+            for resolution in leaves(item)]
+
+
 if SMOKE:
 
     class IntegrationSmoke(unittest.TestCase):
@@ -268,6 +286,27 @@ if SMOKE:
             cls.studios = json.loads((REPO / 'studios.json').read_text())
             from installer.configgen import CONFIG_EXAMPLE
             cls.veto = CONFIG_EXAMPLE['veto_format']
+            # Seed disabled user-owned clients in this disposable stack. Bootstrap
+            # must leave their API representations unchanged, including on rerun.
+            cls.user_clients = {}
+            for app, prefix, folder in (('sonarr', 'tv', 'tv'),
+                                        ('radarr', 'movie', 'movies'),
+                                        ('lidarr', 'music', 'music')):
+                arr = cls.arr(app)
+                template = next(c for c in arr.call('downloadclient/schema')
+                                if c['implementation'] == 'Transmission')
+                bs._set_fields(template.get('fields'), {
+                    'host': 'transmission', 'port': 9091,
+                    'username': cls.stack.transmission_user,
+                    'password': cls.stack.transmission_pass,
+                    prefix + 'Category': '',
+                    prefix + 'Directory': '/downloads/complete/' + folder})
+                template.update({'name': 'Smoke user Transmission', 'enable': False,
+                                 'protocol': 'torrent',
+                                 'removeCompletedDownloads': False,
+                                 'removeFailedDownloads': False})
+                created = arr.call('downloadclient', 'POST', template)
+                cls.user_clients[app] = arr.call('downloadclient/%d' % created['id'])
             # the REAL bootstrap, once, shared by the ordered assertions
             log('calling bootstrap(deployment, studios, %r, %s)'
                 % (cls.veto, cls.feed_url))
@@ -297,15 +336,6 @@ if SMOKE:
             return {f.get('name'): f.get('value') for f in entry.get('fields') or []}
 
         @classmethod
-        def profile_resolutions(cls, profile, acc=None):
-            acc = [] if acc is None else acc
-            for item in profile.get('items') or []:
-                if item.get('quality'):
-                    acc.append(item['quality'].get('resolution'))
-                cls.profile_resolutions(item, acc)
-            return acc
-
-        @classmethod
         def format_scores(cls, profile):
             return {fi['name']: fi.get('score') for fi in profile.get('formatItems') or []}
 
@@ -323,14 +353,17 @@ if SMOKE:
             for name in ('Dubs RU 2160p', 'Dubs RU 1080p'):
                 self.assertIn(name, profiles)
                 self.assertEqual(profiles[name]['id'], report['profiles'][name])
-            resolutions = sorted(set(self.profile_resolutions(profiles['Dubs RU 2160p'])))
+            definitions = {d['quality']['id']: d['quality']
+                           for d in sonarr.call('qualitydefinition')}
+            resolutions = sorted(set(profile_resolutions(
+                profiles['Dubs RU 2160p'], definitions)))
             self.assertIn(1080, resolutions)
             self.assertIn(2160, resolutions)
             for r in resolutions:
                 self.assertIn(r, (1080, 2160),
                               'profile allows foreign resolution %s' % r)
             resolutions1080 = sorted(set(
-                self.profile_resolutions(profiles['Dubs RU 1080p'])))
+                profile_resolutions(profiles['Dubs RU 1080p'], definitions)))
             self.assertEqual(resolutions1080, [1080])
             scores = self.format_scores(profiles['Dubs RU 2160p'])
             self.assertEqual(scores[self.veto], -10000000)  # hard RU veto
@@ -347,9 +380,34 @@ if SMOKE:
             self.assertEqual(len(clients), 1)
             fields = self.field_map(clients[0])
             self.assertEqual(fields['host'], 'transmission')
-            self.assertEqual(fields['tvCategory'], 'dubs-tv')
+            self.assertEqual(fields.get('tvCategory') or '', '')
+            self.assertEqual(fields['tvDirectory'], '/downloads/complete/tv')
             self.assertEqual(fields['username'], self.stack.transmission_user)
             self.assertTrue(fields['password'])  # seeded, never empty
+            directories = []
+            for app, prefix, folder in (('sonarr', 'tv', 'tv'),
+                                        ('radarr', 'movie', 'movies'),
+                                        ('lidarr', 'music', 'music')):
+                arr = self.arr(app)
+                managed = [c for c in arr.call('downloadclient')
+                           if c['name'] == 'Dubs Transmission']
+                self.assertEqual(len(managed), 1)
+                configured = self.field_map(managed[0])
+                self.assertEqual(configured.get(prefix + 'Category') or '', '')
+                self.assertEqual(configured[prefix + 'Directory'],
+                                 '/downloads/complete/' + folder)
+                directories.append(configured[prefix + 'Directory'])
+                self.assertEqual(configured['host'], 'transmission')
+                self.assertEqual(configured['username'], self.stack.transmission_user)
+                self.assertTrue(configured['password'])
+                user = self.user_clients[app]
+                self.assertEqual(arr.call('downloadclient/%d' % user['id']), user)
+                mappings = [m for m in arr.call('remotepathmapping')
+                            if m['host'] == 'transmission']
+                self.assertEqual(len(mappings), 1)
+                self.assertEqual((mappings[0]['remotePath'], mappings[0]['localPath']),
+                                 ('/downloads/', '/torrents/'))
+            self.assertEqual(len(set(directories)), 3)
             # remote path mapping transmission -> sonarr
             mappings = [m for m in sonarr.call('remotepathmapping')
                         if m['host'] == 'transmission']
@@ -374,10 +432,14 @@ if SMOKE:
                 self.assertEqual(fields['baseUrl'], 'http://%s:%d' % (
                     impl.lower(), PORTS[impl.lower()]))
                 self.assertTrue(fields['apiKey'])
-            profiles = [p for p in prowlarr.call('indexerprofile')
+            profiles = [p for p in prowlarr.call('appprofile')
                         if p['name'] == 'Dubs']
             self.assertEqual(len(profiles), 1)
-            self.assertEqual(profiles[0]['minimumSeeders'], 3)
+            self.assertEqual(profiles[0]['minimumSeeders'], 1)
+            self.assertEqual(profiles[0]['id'],
+                             self.report['prowlarr_indexer_profile']['id'])
+            for key in ('enableRss', 'enableAutomaticSearch', 'enableInteractiveSearch'):
+                self.assertTrue(profiles[0][key])
 
         def test_03_custom_import_list_future_only(self):
             sonarr = self.arr('sonarr')
@@ -385,7 +447,8 @@ if SMOKE:
                      if l['name'] == 'MyShows watching (Dubs feed)']
             self.assertEqual(len(lists), 1)
             entry = lists[0]
-            self.assertEqual(self.field_map(entry).get('baseUrl'), self.feed_url)
+            self.assertEqual(self.field_map(entry).get('baseUrl'),
+                             self.feed_url + '/series')
             self.assertEqual(entry.get('shouldMonitor'), 'future')
             self.assertEqual(entry.get('monitorNewItems'), 'all')
             self.assertFalse(entry.get('searchForMissingEpisodes'))
@@ -398,14 +461,20 @@ if SMOKE:
             s = self.requests.Session()
             s.auth = (self.stack.transmission_user, self.stack.transmission_pass)
             r1 = s.post(url, json={}, timeout=10)
+            self.assertEqual(r1.status_code, 409)
             session = r1.headers.get('X-Transmission-Session-Id')
             self.assertTrue(session, 'no session id issued (409 handshake)')
             r2 = s.post(url, json={'method': 'session-get'}, timeout=10,
                         headers={'X-Transmission-Session-Id': session})
             self.assertEqual(r2.status_code, 200)
             self.assertEqual(r2.json()['result'], 'success')
+            unauthenticated = self.requests.post(
+                url, json={'method': 'session-get'}, timeout=10,
+                headers={'X-Transmission-Session-Id': session})
+            self.assertEqual(unauthenticated.status_code, 401)
             bad = self.requests.post(url, json={}, timeout=10,
-                                     auth=(self.stack.transmission_user, 'wrong'))
+                                     auth=(self.stack.transmission_user, 'wrong'),
+                                     headers={'X-Transmission-Session-Id': session})
             self.assertEqual(bad.status_code, 401)
 
         def test_05_second_bootstrap_is_idempotent(self):
@@ -421,6 +490,11 @@ if SMOKE:
             before_lists = len([l for l in self.arr('sonarr').call('importlist')
                                 if l['name'] == 'MyShows watching (Dubs feed)'])
             report2 = self.do_bootstrap()
+            for app, user in self.user_clients.items():
+                arr = self.arr(app)
+                self.assertEqual(arr.call('downloadclient/%d' % user['id']), user)
+                self.assertEqual(len([c for c in arr.call('downloadclient')
+                                      if c['name'] == 'Dubs Transmission']), 1)
             after_profiles = {p['name']: p['id']
                               for p in self.arr('sonarr').call('qualityprofile')}
             self.assertEqual(report2['profiles'], self.report['profiles'])
@@ -443,19 +517,53 @@ if SMOKE:
                 self.assertEqual(r['class'], 'ready', r)
                 self.assertTrue(r['managed'], 'dubs-* container must be flagged managed')
 
-    def smoke_main():
-        if not SMOKE:
-            print('integration_smoke is flag-gated: run with '
-                  'DUBS_SMOKE=1 on a Docker host (see module docstring)')
-            return 2
-        unittest.main(module=None, argv=[sys.argv[0], '-v'])
-        return 0
-
-    if __name__ == '__main__':
-        sys.exit(smoke_main())
 
 else:
     if __name__ == '__main__':
         print('integration_smoke is flag-gated: run with '
               'DUBS_SMOKE=1 on a Docker host (see module docstring)')
         sys.exit(2)
+
+def expected_names(module):
+    cls = getattr(module, 'IntegrationSmoke', None)
+    return sorted(n for n in dir(cls)
+                  if n.startswith('test') and callable(getattr(cls, n))) if cls else []
+
+def suite_for(module):
+    return unittest.TestLoader().loadTestsFromModule(module)
+
+def _cases(suite):
+    for item in suite:
+        if isinstance(item, unittest.TestSuite):
+            yield from _cases(item)
+        else:
+            yield item
+
+def smoke_main(module=None):
+    """Run the REAL smoke; refuse fake success when nothing is selected.
+
+    unittest.main(module=None, argv=[...]) used to load ZERO tests and
+    exit 0 ("Ran 0 tests" green CI); the runner below fails closed.
+    """
+    target = module if module is not None else sys.modules['__main__']
+    if not SMOKE:
+        print('integration_smoke is flag-gated: run with '
+              'DUBS_SMOKE=1 on a Docker host (see module docstring)')
+        return 2
+    expected = expected_names(target)
+    suite = suite_for(target)
+    selected = sorted({case.id().rsplit('.', 1)[-1] for case in _cases(suite)})
+    if len(expected) != 6 or suite.countTestCases() != len(expected) or selected != expected:
+        print('smoke runner refuses to start: selected %d of %d expected '
+              'test methods (%s)' % (len(selected), len(expected),
+                                     ', '.join(expected) or 'none'))
+        return 2
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.testsRun != len(expected):
+        print('smoke runner refuses success: no tests ran')
+        return 2
+    return 0 if result.wasSuccessful() else 1
+
+
+if __name__ == "__main__" and SMOKE:
+    sys.exit(smoke_main())

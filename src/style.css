@@ -29,3 +29,185 @@ html.dubs-tv .upcoming-line{display:grid;grid-template-columns:58px 150px minmax
 html.dubs-tv .episode-card>.episode-show>summary{padding-right:440px;padding-bottom:20px}
 html.dubs-tv .episode-card>.card-actions{top:33px;right:30px;max-width:48%;gap:18px}
 html.dubs-tv .episode-card>.card-actions button{font-size:16px;min-height:46px}
+
+/* localMedia: фактические данные файла рядом с кнопкой «В медиатеке» */
+.media-badge{display:inline-flex;align-items:center;min-height:36px;padding:8px 10px;border-radius:10px;background:#202024;border:1px solid #39393d;color:#d6d6dc;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}.media-badge:hover{background:#2b2b30}.media-badge.is-verified{border-color:#2c5a3d;color:#8fdcae;background:#15261b}.media-badge.is-stale{border-color:#6b5426;color:#e2b25c;background:#261e12}.media-badge.is-unknown{color:#a9a9b2}.media-panel{border:1px solid #2c2c30;border-radius:10px;background:#17171a;padding:12px 14px;margin-top:10px;font-size:12px;line-height:1.6;color:#b5b5bc}.media-panel[hidden]{display:none!important}.media-note{color:#c9a06a;margin:0 0 8px}.media-line{margin:4px 0}.media-tracks{margin:8px 0 0;padding-left:18px}.media-tracks li{margin:3px 0}.media-studio{display:block;color:#8b8b93;font-size:11px}.media-studio.is-unknown{color:#77777e;font-style:italic}.episode-line:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+html.dubs-tv .media-badge{min-height:44px;font-size:14px;padding:10px 14px}
+/* Журнал и настройки событий */
+.events-types{display:grid;gap:10px;margin:12px 0}#events-panel h4{margin:18px 0 8px;font-size:14px}#events-panel .status-row{margin-bottom:8px}#events-notify-request{margin:10px 0 0}.journal-list{list-style:none;margin:10px 0;padding:0;max-height:420px;overflow-y:auto}.journal-item{border-top:1px solid #26262a;padding:11px 0}.journal-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline}.journal-type{font-size:11px;font-weight:650;color:#e0b4b8;border:1px solid #3b2225;background:#231315;border-radius:4px;padding:2px 6px;white-space:nowrap}.journal-type.is-unknown{color:#a9a9b2;border-color:#39393d;background:#202024}.journal-time{font-size:11px;color:#85858c;white-space:nowrap}.journal-title{font-size:13px;color:#e3e3e8;margin-top:6px;line-height:1.5}.journal-message{font-size:12px;color:#9a9aa2;margin-top:3px;line-height:1.5;overflow-wrap:anywhere}.journal-link{display:inline-block;margin-top:7px;font-size:12px;min-height:32px;padding:6px 10px;border-radius:8px}@media(max-width:600px){.events-types{gap:8px}.journal-list{max-height:340px}}
+
+.media-track-title{display:block;color:#b5b5bc;overflow-wrap:anywhere}
+
+/* Compact panel: fixed circles and details anchored to the action edge. */
+.watch-button,.episode-card>.card-actions .watch-button{width:44px;height:44px;min-width:44px;max-width:44px;min-height:44px!important;max-height:44px;flex:0 0 44px;border-radius:50%;padding:0!important;display:inline-grid;place-items:center}
+html.dubs-tv .watch-button,html.dubs-tv .episode-card>.card-actions .watch-button{width:46px;height:46px;min-width:46px;max-width:46px;min-height:46px!important;max-height:46px;flex-basis:46px}
+.episode-actions{position:relative;flex-wrap:wrap;justify-content:flex-end;max-width:100%;min-width:0}
+.episode-actions>.job-details,.episode-actions>.media-panel{order:10;flex:0 0 100%;width:100%;max-width:480px;margin:8px 0 0 auto;overflow-wrap:anywhere}
+.job-details{padding:12px 14px;border:1px solid #2c2c30;border-radius:10px;background:#17171a;color:#b5b5bc;font-size:12px;line-height:1.6}
+.episode-actions .download-ring{width:44px;height:44px;min-width:44px;min-height:44px;padding:0;background:transparent;border-radius:50%;flex:0 0 44px}
+.download-ring svg{pointer-events:none}.ring-label{pointer-events:none}
+.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:20px;align-items:start}
+.settings>#tv-preferences{grid-column:1/-1;margin:0}.settings-column{display:flex;flex-direction:column;gap:16px;min-width:0}.settings-column>.panel{margin:0;padding:18px;min-width:0}.settings>.settings-head{grid-column:1/-1;grid-row:1;margin:0}.settings .panel p{font-size:12px;line-height:1.5}.settings .preference-switch{max-width:none;padding:9px 12px;gap:12px;font-size:13px}.settings .panel h3{margin-bottom:12px}.settings .account-form{grid-template-columns:1fr}.settings .token-form label{min-width:0}.settings pre{overflow-wrap:anywhere}.settings .panel>details:first-child{margin-top:0;padding-top:0;border-top:0}
+@media(max-width:700px){.settings{grid-template-columns:minmax(0,1fr);gap:12px}.episode-actions{justify-content:flex-start}.episode-actions>.job-details,.episode-actions>.media-panel{max-width:none}.episode-line>div{min-width:0}.episode-title{overflow-wrap:anywhere}.episode-actions .download-task{max-width:100%}}
+@media(min-width:701px){.episode-line{grid-template-columns:50px minmax(0,1fr) minmax(0,480px)}#events-panel{grid-column:1/-1}#events-panel .events-types{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.episode-line>.episode-actions{grid-column:1/-1}.episode-line{grid-template-columns:50px minmax(0,1fr)}}
+html.dubs-tv .episode-actions .download-ring{min-height:44px}
+/* Cancellation and completed orders retain a readable gray surface. */
+button.order-outline,.episode-card>.bulk-download.order-outline,.episode-card>.bulk-download.is-complete{background:#252528;color:#f5f5f7;border:1px solid var(--red);opacity:1}
+button.order-outline:hover,.episode-card>.bulk-download.order-outline:hover{background:#333338}
+button.order-outline:disabled{background:#252528;color:#ddd;border-color:var(--red);cursor:default}
+#studio-order-form{margin-top:0}#studio-order-list{padding-left:26px;margin:16px 0}#studio-order-list li{padding:7px 0;min-height:58px;border-bottom:1px solid #303033}#studio-order-list li::marker{color:#aaa;font-size:13px}#studio-order-list li>span{display:inline-block;width:calc(100% - 116px);vertical-align:middle;overflow-wrap:anywhere;padding-right:8px;font-size:14px}#studio-order-list button{min-width:44px;min-height:44px;padding:8px;margin-left:4px}#studio-order-list li[draggable=true]{cursor:grab}#studio-order-status[data-state=error]{color:#ff999e}#studio-order-status[data-state=applied]{color:#8fdcae}#studio-order-status[data-state=pending],#studio-order-status[data-state=unsaved]{color:#e2b25c}
+@media(max-width:400px){#studio-order-list{padding-left:20px}#studio-order-list li>span{font-size:12px;width:calc(100% - 104px)}#studio-order-list button{margin-left:1px}}
+
+/* Compact phone cards: larger artwork and two action rows to its right. */
+.episode-line>.media-panel,.episode-line>.job-details,.upcoming-line>.media-panel,.upcoming-line>.job-details{grid-column:2/-1;justify-self:end;width:100%;max-width:480px;margin:8px 0 0;overflow-wrap:anywhere}
+.upcoming-line>.media-panel,.upcoming-line>.job-details{grid-column:3/-1}
+.show-voice.is-selected,.show-voice.is-selected svg{color:var(--red)}
+html.dubs-native-mobile,html.dubs-native-mobile body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html.dubs-native-mobile input,html.dubs-native-mobile select,html.dubs-native-mobile textarea{font-size:16px}
+/* Existing iOS clients overlay their native buttons over the WebView. */
+html.dubs-native-ios main{padding-top:48px}
+html.dubs-native-ios::before{content:"";position:fixed;top:0;left:0;right:0;height:44px;background:#000;z-index:20;pointer-events:none}
+html.dubs-native-ios .toolbar{top:44px}
+@media(max-width:700px){
+ html:not(.dubs-tv) main{padding-left:12px;padding-right:12px}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary{min-height:102px;padding:16px 146px 16px 0;gap:10px}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary .cover{width:72px;height:56px;flex:0 0 72px}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary .show-title{font-size:13px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary .show-meta{font-size:11px;line-height:1.25}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary .chevron{top:46px;width:9px;height:9px}
+ html:not(.dubs-tv) .episode-card>.card-actions{top:17px;right:14px;width:120px;max-width:none;gap:4px;display:grid;grid-template-columns:minmax(0,1fr) 32px;justify-content:end}
+ html:not(.dubs-tv) .episode-card>.card-actions button{font-size:11px;line-height:1.2;min-height:32px;padding:6px;white-space:nowrap;min-width:0}
+ html:not(.dubs-tv) .episode-card>.card-actions .bulk-download{grid-column:1/-1}
+ html:not(.dubs-tv) .episode-card>.card-actions .watch-button,html:not(.dubs-tv) .episode-actions .watch-button{width:32px;height:32px;min-width:32px;max-width:32px;min-height:32px!important;max-height:32px;flex:0 0 32px;font-size:19px;padding:0!important}
+ html:not(.dubs-tv) .upcoming-line{grid-template-columns:18px 66px minmax(0,1fr) 112px;gap:8px;padding:14px 0;min-height:98px}
+ html:not(.dubs-tv) .upcoming-line>.day-number{grid-column:1;grid-row:1;font-size:17px}
+ html:not(.dubs-tv) .upcoming-line>.cover{grid-column:2;grid-row:1;width:66px;height:56px}
+ html:not(.dubs-tv) .upcoming-line>div:nth-child(3){grid-column:3;grid-row:1;min-width:0}
+ html:not(.dubs-tv) .upcoming-title{font-size:13px;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+ html:not(.dubs-tv) .upcoming-subtitle{font-size:10px;line-height:1.3;margin-top:4px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+ html:not(.dubs-tv) .upcoming-line .episode-details{font-size:10px;line-height:1.2;margin-top:4px}
+ html:not(.dubs-tv) .upcoming-line>.episode-actions{grid-column:4;grid-row:1;justify-content:flex-end;gap:4px;min-width:0;flex-direction:column;align-items:flex-end}
+ html:not(.dubs-tv) .upcoming-line>.episode-actions>button{font-size:11px;padding:6px;min-height:32px;white-space:nowrap;width:112px;max-width:112px}
+ html:not(.dubs-tv) .upcoming-line .download-task{gap:4px;flex-wrap:nowrap;justify-content:flex-end}
+ html:not(.dubs-tv) .upcoming-line .download-task>button:not(.download-ring){font-size:11px;min-height:32px;padding:6px}
+ html:not(.dubs-tv) .episode-actions .download-ring{width:32px;height:32px;min-width:32px;min-height:32px;padding:0;flex:0 0 32px}
+ html:not(.dubs-tv) .download-ring svg{width:32px;height:32px}
+ html:not(.dubs-tv) .ring-label{font-size:9px}
+ html:not(.dubs-tv) .episode-line{grid-template-columns:48px minmax(0,1fr) 136px;gap:8px}
+ html:not(.dubs-tv) .episode-number{font-size:11px;white-space:nowrap}
+ html:not(.dubs-tv) .episode-line>.episode-actions{grid-column:3;grid-row:1;max-width:136px;justify-content:flex-end;gap:4px}
+ html:not(.dubs-tv) .episode-line>.episode-actions button,html:not(.dubs-tv) .episode-line .library-link,html:not(.dubs-tv) .episode-line .media-badge{font-size:10px;min-height:32px;padding:5px;white-space:nowrap}
+ html:not(.dubs-tv) .episode-line .download-task{gap:4px;flex-wrap:nowrap}
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{display:grid;grid-template-columns:minmax(0,1fr) 40px;align-items:center;min-width:0}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.media-badge{grid-column:1;grid-row:1;min-width:0;justify-self:stretch;justify-content:center}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.episode-find{grid-column:2;grid-row:1;min-width:0;padding-left:3px;padding-right:3px}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.episode-primary{grid-column:1;grid-row:2;min-width:0;text-align:center}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.watch-button{grid-column:2;grid-row:2;justify-self:end}
+ html:not(.dubs-tv) .episode-title{font-size:12px;line-height:1.3;overflow-wrap:anywhere}
+ html:not(.dubs-tv) .episode-note{font-size:10px}
+ html:not(.dubs-tv) .episode-line>.media-panel,html:not(.dubs-tv) .episode-line>.job-details,html:not(.dubs-tv) .upcoming-line>.media-panel,html:not(.dubs-tv) .upcoming-line>.job-details{grid-column:1/-1;max-width:none}
+}
+@media(min-width:701px){
+ html:not(.dubs-tv) .upcoming-line{grid-template-columns:45px 105px minmax(0,1fr) max-content}
+ html:not(.dubs-tv) .upcoming-line>.day-number{grid-column:1;grid-row:1}
+ html:not(.dubs-tv) .upcoming-line>.cover{grid-column:2;grid-row:1}
+ html:not(.dubs-tv) .upcoming-line>div:nth-child(3){grid-column:3;grid-row:1;min-width:0}
+ html:not(.dubs-tv) .upcoming-line>.episode-actions{grid-column:4;grid-row:1;justify-self:end;justify-content:flex-end;align-items:center;flex-direction:row;flex-wrap:nowrap}
+ html:not(.dubs-tv) .upcoming-line .download-task{flex-wrap:nowrap}
+}
+
+/* Keep the SVG and its label concentric in WebKit and Chromium. */
+.download-ring{box-sizing:border-box;border:0;padding:0;line-height:1;overflow:hidden}
+.download-ring svg{display:block;grid-area:1/1}
+.download-ring .ring-label{inset:0;display:grid;place-items:center;line-height:1;text-align:center;margin:0;padding:0}
+.watch-confirm-dialog{max-width:440px;width:calc(100% - 32px);box-sizing:border-box;background:#171719;color:#fff;border:1px solid #444;border-radius:18px;padding:24px}
+.watch-confirm-dialog::backdrop{background:#000b}
+.watch-confirm-actions{display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-active-download{display:grid;grid-template-columns:minmax(0,1fr) 40px;align-items:center}
+ html:not(.dubs-tv) .is-active-download>.download-task{display:contents}
+ html:not(.dubs-tv) .is-active-download>.download-task>button:not(.download-ring){grid-column:1;grid-row:1;justify-self:stretch;min-width:0}
+ html:not(.dubs-tv) .is-active-download>.download-task>.download-ring{grid-column:2;grid-row:1;justify-self:end;width:32px;height:32px;min-height:32px;max-height:32px;padding:0}
+ html:not(.dubs-tv) .is-active-download>.episode-find{grid-column:1;grid-row:2;justify-self:stretch;min-width:0}
+ html:not(.dubs-tv) .is-active-download>.watch-button{grid-column:2;grid-row:2;justify-self:end}
+}
+@media(max-width:700px){html:not(.dubs-tv) .episode-line>.episode-actions.is-active-download,html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{width:136px}html:not(.dubs-tv) .episode-line>.episode-actions .download-ring{padding:0!important}}
+
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-not-ordered{display:grid;width:136px;grid-template-columns:minmax(0,1fr) 40px;align-items:center}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.episode-primary{grid-column:1/-1;grid-row:1;justify-self:stretch}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.episode-find{grid-column:1;grid-row:2;justify-self:stretch}
+ html:not(.dubs-tv) .episode-actions.is-not-ordered>.watch-button{grid-column:2;grid-row:2;justify-self:end}
+}
+.schedule-form{display:grid;gap:14px}.schedule-form label{display:grid;gap:7px}.schedule-form input{max-width:100%;box-sizing:border-box}
+/* Reserve the same chevron gutter on every episode row as on show headers. */
+.episode-line,.upcoming-line{padding-right:30px}
+@media(max-width:700px){html:not(.dubs-tv) .episode-line,html:not(.dubs-tv) .upcoming-line{padding-right:14px}}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-line>.episode-actions.is-library-ready{grid-template-columns:minmax(0,1fr) 50px}
+ html:not(.dubs-tv) .episode-actions.is-library-ready>.episode-primary{grid-column:1/-1;margin-right:40px}
+}
+
+/* One shared action rail for show headers and every episode state. */
+@media(min-width:701px){
+ .episode-card{--action-width:360px;--action-gap:8px;--action-circle:44px;--action-columns:minmax(0,1fr) 90px 75px var(--action-circle)}
+ .episode-card>.episode-show>summary{padding-right:400px}
+ .episode-card>.card-actions,.episode-line>.episode-actions{width:var(--action-width);max-width:var(--action-width);display:grid;grid-template-columns:var(--action-columns);gap:var(--action-gap);align-items:center}
+ .episode-card>.card-actions{right:30px}
+ .episode-line>.episode-actions{justify-self:end}
+ .episode-card>.card-actions>button,.episode-line>.episode-actions>button,.episode-line>.episode-actions>.library-link{min-width:0;justify-self:stretch;text-align:center;justify-content:center;box-sizing:border-box;min-height:36px}
+ .episode-card>.card-actions>.bulk-download{grid-column:1/3;grid-row:1}
+ .episode-card>.card-actions>button:nth-child(2){grid-column:3;grid-row:1}
+ .episode-card>.card-actions>.watch-button{grid-column:4;grid-row:1}
+ .episode-line>.episode-actions>.episode-primary{grid-column:1;grid-row:1}
+ .episode-line>.episode-actions>.media-badge{grid-column:2;grid-row:1;min-width:0;justify-content:center}
+ .episode-line>.episode-actions>.episode-find{grid-column:3;grid-row:1}
+ .episode-line>.episode-actions>.watch-button{grid-column:4;grid-row:1}
+ .episode-line>.episode-actions.is-not-ordered>.episode-primary{grid-column:1/3}
+ .episode-line>.episode-actions.is-active-download>.download-task{display:contents}
+ .episode-line>.episode-actions.is-active-download>.download-task>button:not(.download-ring){grid-column:1;grid-row:1;min-width:0;justify-self:stretch}
+ .episode-line>.episode-actions.is-active-download>.download-task>.download-ring{grid-column:2;grid-row:1;justify-self:center}
+ .episode-card>.card-actions>.watch-button,.episode-line>.episode-actions>.watch-button{width:var(--action-circle);height:var(--action-circle);min-height:var(--action-circle)!important;max-width:var(--action-circle);justify-self:end;padding:0!important;flex:none}
+ html.dubs-tv .episode-card{--action-width:420px;--action-gap:12px;--action-circle:44px;--action-columns:minmax(0,1fr) 100px 90px var(--action-circle)}
+ html.dubs-tv .episode-card>.card-actions{width:420px;max-width:420px;gap:12px;display:grid}
+ html.dubs-tv .episode-card>.episode-show>summary{padding-right:460px}
+}
+@media(max-width:700px){
+ html:not(.dubs-tv) .episode-card>.card-actions{width:136px;grid-template-columns:minmax(0,1fr) 40px}
+ html:not(.dubs-tv) .episode-card>.episode-show>summary{padding-right:162px}
+}
+.watch-confirm-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;flex-wrap:nowrap}
+.watch-confirm-actions>button{min-width:0;white-space:nowrap;padding:10px 12px;font-size:14px}
+html.dubs-native-ios.dubs-settings-only main{padding-top:0}
+html.dubs-native-ios.dubs-settings-only::before{display:none}
+html.dubs-native-ios.dubs-settings-only .toolbar{top:0}
+.native-client-panel>a,.native-client-panel>button{display:block;width:100%;box-sizing:border-box;text-align:left;padding:12px;margin-top:10px;border-radius:10px}
+@media(min-width:701px){
+ html.dubs-tv .episode-card{--action-columns:minmax(0,1fr) 100px 112px var(--action-circle)}
+ html.dubs-tv .episode-card>.card-actions>.watch-button,html.dubs-tv .episode-line>.episode-actions>.watch-button{width:44px;height:44px;min-width:44px;max-width:44px;min-height:44px!important;max-height:44px}
+ html.dubs-tv .episode-line>.episode-actions>.media-badge{padding-left:8px;padding-right:8px}
+ .episode-card>.card-actions>button:nth-child(2){padding-left:6px;padding-right:6px}
+}
+/* Season actions share the series and episode action rails. */
+.season-header{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #34343a;padding:14px 30px 14px 0;min-width:0}
+.season-title{font-size:15px;white-space:nowrap}
+.season-header>.card-actions{width:var(--action-width);max-width:var(--action-width);flex:none;display:grid;grid-template-columns:var(--action-columns);gap:var(--action-gap);align-items:center}
+.season-header>.card-actions>button{min-width:0;min-height:36px;justify-self:stretch;justify-content:center;text-align:center;box-sizing:border-box;white-space:nowrap;padding-left:6px;padding-right:6px}
+.season-header>.card-actions>.bulk-download{grid-column:1/3;grid-row:1}
+.season-header>.card-actions>button:nth-child(2){grid-column:3;grid-row:1}
+.season-header>.card-actions>.watch-button{grid-column:4;grid-row:1;width:var(--action-circle);height:var(--action-circle);min-height:var(--action-circle)!important;max-width:var(--action-circle);justify-self:end;padding:0!important}
+@media(max-width:700px){html:not(.dubs-tv) .season-header{padding-right:14px}html:not(.dubs-tv) .season-header>.card-actions{width:136px;grid-template-columns:minmax(0,1fr) 40px;gap:4px}html:not(.dubs-tv) .season-header>.card-actions>button{font-size:11px;min-height:32px;padding:6px}html:not(.dubs-tv) .season-header>.card-actions>.bulk-download{grid-column:1/-1;grid-row:1}html:not(.dubs-tv) .season-header>.card-actions>button:nth-child(2){grid-column:1;grid-row:2}html:not(.dubs-tv) .season-header>.card-actions>.watch-button{grid-column:2;grid-row:2;width:32px;height:32px;min-height:32px!important;max-width:32px}}
+
+.episode-card>.card-actions{z-index:1}
+/* Compact controls while retaining the last MyShows sync timestamp. */
+.released-tools{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px}
+.released-tools small{text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upcoming-sync{margin:14px 0 8px}
+.calendar-controls{flex-wrap:nowrap;gap:8px;margin:0 0 8px}
+.calendar-controls select{min-width:0;max-width:240px;flex:0 1 240px}
+.calendar-controls button{white-space:nowrap}
+.calendar-controls .calendar-refresh{margin-left:auto}
+.show>.editor{margin-left:0;width:100%}
+.show>.editor .hint{font-size:11px;line-height:1.35;margin:10px 0 0}
+@media(max-width:700px){.released-tools{gap:5px}.released-tools button{font-size:11px;padding:7px 8px}.released-tools small{font-size:9px}.calendar-controls select{flex:1 1 0;font-size:12px;padding:8px 22px 8px 7px;min-height:36px}.calendar-controls button{font-size:11px;padding:8px;min-height:36px}.show>.editor .hint{font-size:10px}}

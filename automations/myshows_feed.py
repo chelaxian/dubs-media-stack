@@ -7,6 +7,7 @@ import requests
 SRC=os.environ.get('DUBS_SRC',str(Path(__file__).resolve().parents[1]/'src'))
 sys.path.insert(0,SRC)
 import runtime as rt
+import schedule_settings
 STATE=rt.feed_state_root()
 lock=threading.Lock()
 def save(name,data):
@@ -46,10 +47,13 @@ def refresh():
   except Exception:logging.exception('Could not trigger Sonarr import; its scheduled sync will retry')
  save('status.json',{'updated':time.strftime('%Y-%m-%dT%H:%M:%S%z'),'login':rt.settings()['login'],'selected':len(selected),'mapped':len(result),'unmatched':unmatched,'direction':'MyShows watching -> Sonarr; future episodes only'});logging.info('Watchlist updated: %d/%d verified shows',len(result),len(selected))
 def worker():
+ last=0
  while True:
-  try:refresh()
-  except Exception:logging.exception('Refresh failed; preserving cached list')
-  time.sleep(3600)
+  if time.time()-last>=schedule_settings.current()['sync_minutes']*60:
+   try:refresh()
+   except Exception:logging.exception('Refresh failed; preserving cached list')
+   last=time.time()
+  time.sleep(5)
 class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   # SonarrList requests {baseUrl}/api/v3/series?apikey=... — strip the query.

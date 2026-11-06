@@ -12,7 +12,11 @@ sys.path.insert(0,str(rt.ui_dir()))
 import render as ui
 import security as sec
 import episodes
+import notifications
 import players
+import studio_order
+import watch_settings
+import schedule_settings
 STATE=rt.state_root()
 CFG=rt.settings()
 ROLE=os.environ.get('SERIES_CONTROL_ROLE','web')
@@ -318,9 +322,7 @@ def cleanup(dry=False):
  if ROLE!='worker':raise PermissionError('Cleanup is restricted to worker')
  mp=rt.media_paths()
  if not rt.cleanup_enabled():
-  # Watched cleanup is strictly opt-in: a fresh install never deletes anything
-  # until the operator explicitly sets cleanup_enable=true in config.json.
-  save('cleanup-status.json',{'time':time.time(),'state':'Автоочистка отключена в config.json (cleanup_enable); удаление не выполнялось'});return
+  save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
  ok,reason=rt.storage_ready()
  if not ok:
   save('cleanup-status.json',{'time':time.time(),'state':'Хранилище не готово ('+reason+'); удаление не выполнялось'});return
@@ -341,7 +343,10 @@ def cleanup(dry=False):
    if not expected or not actual or int(expected.removeprefix('tt'))!=int(str(actual).removeprefix('tt')):raise ValueError('IMDb не совпадает / отсутствует')
    matched=match_watched(detail,watched,eps);seen={e['id'] for e in matched}
    to_unmonitor=[e['id'] for e in matched if e.get('monitored')]
-   if to_unmonitor and not dry:api('episode/monitor','PUT',{'episodeIds':to_unmonitor,'monitored':False})
+   if to_unmonitor and not dry:
+    with watch_settings.deletion_guard() as allowed:
+     if not allowed:save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
+     api('episode/monitor','PUT',{'episodeIds':to_unmonitor,'monitored':False})
    groups={}
    for e in eps:
     if e.get('episodeFileId'):groups.setdefault(e['episodeFileId'],[]).append(e)
@@ -354,16 +359,18 @@ def cleanup(dry=False):
     source=source_copy(sr['id'],fid,lp)
     record={'series':sr['title'],'episodes':[f'S{e["seasonNumber"]:02}E{e["episodeNumber"]:02}' for e in group],'fileId':fid,'bytes':lp.stat().st_size,'sourceRemoved':bool(source)}
     if not dry:
-     # Remove monitoring first; an interruption may leave files, never a re-download loop.
-     api('episode/monitor','PUT',{'episodeIds':[e['id'] for e in group],'monitored':False})
-     if source:disable_source(source)
-     # Persist the exact pending source before deleting the library file; crash recovery retries it.
-     source_id=fingerprint(source) if source else None
-     if source:
-      pending=load('pending-sources.json',[]);pending.append({'path':str(source),'fingerprint':source_id});save('pending-sources.json',pending)
-     api('episodefile/'+str(fid),'DELETE')
-     if source:unlink_media(source,source_id)
-     record['time']=time.time();log=load('deleted.json',[]);log.append(record);save('deleted.json',log[-2000:])
+     with watch_settings.deletion_guard() as allowed:
+      if not allowed:save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
+      # Remove monitoring first; an interruption may leave files, never a re-download loop.
+      api('episode/monitor','PUT',{'episodeIds':[e['id'] for e in group],'monitored':False})
+      if source:disable_source(source)
+      # Persist the exact pending source before deleting the library file; crash recovery retries it.
+      source_id=fingerprint(source) if source else None
+      if source:
+       pending=load('pending-sources.json',[]);pending.append({'path':str(source),'fingerprint':source_id});save('pending-sources.json',pending)
+      api('episodefile/'+str(fid),'DELETE')
+      if source:unlink_media(source,source_id)
+      record['time']=time.time();log=load('deleted.json',[]);log.append(record);save('deleted.json',log[-2000:])
     deleted.append(record)
   except Exception as e:errors.append({'series':sr['title'],'error':type(e).__name__});logging.warning('Cleanup skipped series %s: %s',sr['id'],type(e).__name__)
   time.sleep(.3)
@@ -372,12 +379,17 @@ def cleanup(dry=False):
   pending=load('pending-sources.json',[]);remaining=[]
   for record in pending:
    try:
-    p=safe_path(record['path'],rt.media_paths()['torrent_host']);disable_source(p);unlink_media(p,record['fingerprint'])
+    with watch_settings.deletion_guard() as allowed:
+     if not allowed:return
+     p=safe_path(record['path'],rt.media_paths()['torrent_host']);disable_source(p);unlink_media(p,record['fingerprint'])
    except Exception:remaining.append(record)
   save('pending-sources.json',remaining)
  save('cleanup-status.json',{'time':time.time(),'state':'Предпросмотр' if dry else ('Проверка завершена с ошибками' if errors else 'Проверка завершена'),'files':deleted,'errors':errors})
 
 def worker():
+ # Epoch/cursor must exist before anything else serves or cleans up; the
+ # journal init never requires upstream authentication and never raises here.
+ notifications.journal_init()
  last=0
  while True:
   requested=load('cleanup-request.json',{}).get('requested',0)
@@ -396,7 +408,12 @@ class Handler(sec.HardenedHandler):
  csp="default-src 'none'; style-src 'sha256-"+__import__('base64').b64encode(hashlib.sha256(STYLE.encode()).digest()).decode()+"'; img-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
  def log_message(self,*args):pass
  def output(self,body,status=200,cookie=None):
-  data=('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Мои сериалы · MyShows</title><meta name="theme-color" content="#000000"><style>'+STYLE+'</style><script src="/ui.js" defer></script><main>'+body+'</main></html>').encode();self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(data)))
+  family=sec.native_family(self.headers.get('User-Agent',''))
+  mobile=family in ('native:iOS','native:Android')
+  classes=('dubs-native-mobile'+(' dubs-native-ios' if family=='native:iOS' else '')) if mobile else ''
+  if mobile and 'DubsSettingsOnly/1' in self.headers.get('User-Agent',''):classes+=' dubs-settings-only'
+  viewport='width=device-width,initial-scale=1'+(',maximum-scale=1,minimum-scale=1,user-scalable=no' if mobile else '')
+  data=('<!doctype html><html lang="ru" class="'+classes+'"><meta charset="utf-8"><meta name="viewport" content="'+viewport+'"><title>Мои сериалы · MyShows</title><meta name="theme-color" content="#000000"><style>'+STYLE+'</style><script src="/ui.js" defer></script><main>'+body+'</main></html>').encode();self.send_response(status);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(data)))
   if cookie:self.send_header('Set-Cookie',cookie)
   self.end_headers();self.wfile.write(data)
  def json_output(self,data,status=200):
@@ -405,6 +422,82 @@ class Handler(sec.HardenedHandler):
   sid=sec.cookies(self,'series_session');session=sec.session(sid,self.headers.get('User-Agent',''))
   if session and session.get('persistent'):self._persistent_cookie=sid
   return session
+ def query_params(self):
+  """Strict bounded query parsing for the notification paging contract."""
+  raw=urllib.parse.urlsplit(self.path).query
+  pairs=urllib.parse.parse_qs(raw,keep_blank_values=True,strict_parsing=True,max_num_fields=4,errors='strict')
+  if any(len(v)!=1 for v in pairs.values()):raise ValueError('Duplicate query field')
+  return {k:v[0] for k,v in pairs.items()}
+ def paged_int(self,raw,fallback):
+  """Digits-only bounded ints: Python's int() accepts '1_0' and '+5', the
+  paging contract must not."""
+  if raw is None:return fallback
+  if not re.fullmatch(r'[0-9]{1,12}',raw):raise ValueError('Invalid paging number')
+  return int(raw)
+ def bearer_token(self):
+  """None = no Authorization header; '' = present but unusable (always 401)."""
+  values=self.headers.get_all('Authorization') or []
+  if not values:return None
+  if len(values)!=1:return ''
+  match=re.fullmatch(r'Bearer ([A-Za-z0-9_-]{43})',values[0])
+  return match[1] if match else ''
+ def notifications_get(self):
+  route=urllib.parse.urlsplit(self.path).path
+  if route!='/api/notifications/events':
+   if route not in ('/api/notifications/settings','/api/notifications/devices','/api/notifications/history'):self.send_error(404);return
+   if route!='/api/notifications/history' and urllib.parse.urlsplit(self.path).query:self.send_error(400);return
+   session=self.session()
+   if not session:self.send_error(401);return
+   if route=='/api/notifications/settings':self.json_output(notifications.get_settings());return
+   if route=='/api/notifications/devices':self.json_output({'devices':sec.device_rows(session['user'])});return
+   try:
+    params=self.query_params();
+    if set(params)-{'before','limit'}:raise ValueError('query')
+    limit=self.paged_int(params.get('limit'),50);before=self.paged_int(params.get('before'),notifications.tail()+1)
+   except (ValueError,TypeError):self.send_error(400);return
+   if not 1<=limit<=100 or before<0:self.send_error(400);return
+   page=notifications.history_page(before,limit);page['instanceId']=notifications.instance_id()
+   self.json_output(page);return
+  # The scoped device token authorizes ONLY this read-only feed; an
+  # Authorization header that is present but unusable never falls back to
+  # the session cookie.
+  token=self.bearer_token()
+  if token=='':self.send_error(401);return
+  if token is None:
+   session=self.session()
+   if not session:self.send_error(401);return
+  else:
+   device=sec.device_token_auth(token)
+   if not device:self.send_error(401);return
+   if not sec.consume([('notif-feed',device['deviceId'],120,60)]):self.send_error(429);return
+  try:
+   params=self.query_params();
+   if set(params)-{'after','limit'}:raise ValueError('query')
+   after=self.paged_int(params.get('after'),0);limit=self.paged_int(params.get('limit'),50)
+  except (ValueError,TypeError):self.send_error(400);return
+  if after<0 or not 1<=limit<=100:self.send_error(400);return
+  page=notifications.events_page(after,limit)
+  page['instanceId']=notifications.instance_id();page['settings']=notifications.get_settings()
+  self.json_output(page)
+ def notifications_post(self,s,data):
+  if self.path=='/api/notifications/settings':
+   if data['enabled'] not in ('true','false') or data['show_titles'] not in ('true','false') or len(data['types'])>512:raise ValueError('Invalid settings')
+   try:types=json.loads(data['types'])
+   except ValueError:raise ValueError('Invalid types')
+   if not isinstance(types,list) or len(types)>len(notifications.EVENT_TYPES) or any(not isinstance(x,str) or x not in notifications.EVENT_TYPES or len(x)>64 for x in types):raise ValueError('Invalid types')
+   if not sec.consume([('notif-settings',s['user'],20,300)]):self.send_error(429);return
+   self.json_output(notifications.save_settings(data['enabled']=='true',list(dict.fromkeys(types)),data['show_titles']=='true'));return
+  if self.path=='/api/notifications/devices':
+   if data['platform'] not in ('android','android_tv','ios'):raise ValueError('Invalid platform')
+   if not sec.consume([('notif-device',s['user'],6,3600)]):self.send_error(429);return
+   epoch=notifications.instance_id()
+   if not epoch:self.send_error(503);return
+   device_id,token=sec.register_device(s['user'],data['platform'])
+   # The raw token exists only in this one response; storage is hashed.
+   self.json_output({'deviceId':device_id,'token':token,'cursor':notifications.tail(),'instanceId':epoch});return
+  if not sec.consume([('notif-revoke',s['user'],10,300)]):self.send_error(429);return
+  if not sec.revoke_device(s['user'],data['deviceId']):self.send_error(404);return
+  self.json_output({'ok':True})
  def end_headers(self):
   if getattr(self,'_persistent_cookie',None) and self.path not in ('/logout','/login'):self.send_header('Set-Cookie',self.cookie('series_session',self._persistent_cookie,sec.NATIVE_COOKIE_AGE))
   super().end_headers()
@@ -416,6 +509,18 @@ class Handler(sec.HardenedHandler):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    if not CFG['public_url']:self.send_error(403);return
    self.send_response(302);self.send_header('Location',CFG['public_url']+'/');self.end_headers();return
+  if self.path=='/api/schedule-settings':
+   session=self.session()
+   if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
+   self.json_output(schedule_settings.current());return
+  if self.path=='/api/watch-settings':
+   session=self.session()
+   if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
+   self.json_output(watch_settings.current());return
+  if self.path=='/api/studio-order':
+   session=self.session()
+   if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
+   self.json_output(studio_order.view(STUDIOS));return
   if self.path.startswith('/apps/'):
    name=self.path.removeprefix('/apps/')
    if name not in mobile_artifact_names():self.send_error(404);return
@@ -443,6 +548,8 @@ class Handler(sec.HardenedHandler):
    session=self.session()
    if not session:self.json_output({'message':'Сеанс истёк. Войдите заново'},401);return
    self.json_output({'csrf':session['csrf'],'userId':session['user']});return
+  if urllib.parse.urlsplit(self.path).path.startswith('/api/notifications/'):
+   self.notifications_get();return
   if self.path=='/api/episodes' or self.path.startswith('/api/jobs/'):
    if not self.session():self.send_error(401);return
    try:data=episodes.snapshot(sys.modules[__name__]) if self.path=='/api/episodes' else episodes.result(sys.modules[__name__],self.path.removeprefix('/api/jobs/'))
@@ -468,31 +575,52 @@ class Handler(sec.HardenedHandler):
  def do_POST(self):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    self.send_error(403);return
-  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action'):self.send_error(404);return
+  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke','/api/studio-order','/api/watch-settings','/api/schedule-settings'):self.send_error(404);return
   if not self.check_post():return
   try:
    raw=self.rfile.read(int(self.headers['Content-Length']))
    data=urllib.parse.parse_qs(raw.decode('utf-8'),keep_blank_values=True,strict_parsing=True,max_num_fields=8,errors='strict')
    if any(len(v)!=1 for v in data.values()):raise ValueError('Duplicate field')
    data={k:v[0] for k,v in data.items()}
-   fields={'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'}}
+   fields={'/api/schedule-settings':{'csrf','sync_minutes','upgrade_time','upgrade_interval_hours'},'/api/watch-settings':{'csrf','confirm_watch','delete_watched'},'/api/studio-order':{'csrf','order'},'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'},'/api/notifications/settings':{'csrf','enabled','types','show_titles'},'/api/notifications/devices':{'csrf','platform'},'/api/notifications/revoke':{'csrf','deviceId'}}
    if set(data)!=fields[self.path]:raise ValueError('Fields do not match')
    if self.path=='/login':self.login(data);return
    s=self.session()
    if not s or not re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf','')) or not secrets.compare_digest(data.get('csrf',''),s['csrf']):
     logging.warning('Action authentication rejected: session=%s csrf_length=%s csrf_match=%s',bool(s),len(data.get('csrf','')),bool(s) and bool(re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf',''))) and secrets.compare_digest(data.get('csrf',''),s['csrf']))
     self.send_error(403);return
+   if self.path=='/api/schedule-settings':
+    if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
+    if not sec.consume([('schedule-settings',s['user'],12,300)]):self.send_error(429);return
+    value={k:(data[k] if k=='upgrade_time' else int(data[k])) for k in ('sync_minutes','upgrade_time','upgrade_interval_hours')}
+    self.json_output(schedule_settings.update(value));return
+   if self.path=='/api/watch-settings':
+    if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
+    if not sec.consume([('watch-settings',s['user'],12,300)]):self.send_error(429);return
+    if any(data[k] not in ('0','1') for k in ('confirm_watch','delete_watched')):raise ValueError('Invalid preference')
+    self.json_output(watch_settings.update({k:data[k]=='1' for k in ('confirm_watch','delete_watched')}));return
+   if self.path=='/api/studio-order':
+    if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
+    if not sec.consume([('studio-order',s['user'],6,300)]):self.send_error(429);return
+    if len(data['order'])>4096:raise ValueError('Order too large')
+    with LOCK:result=studio_order.submit(STUDIOS,json.loads(data['order']))
+    self.json_output(result,202);return
    if self.path=='/logout':
     sec.logout(sec.cookies(self,'series_session'));self.send_response(303);self.send_header('Location','/');self.send_header('Set-Cookie',self.cookie('series_session','',0));self.end_headers();return
+   # Notification management POSTs answer JSON and carry their own narrow
+   # rate limits; a scoped device token can never reach here (session+CSRF
+   # only, checked above).
+   if self.path.startswith('/api/notifications/'):
+    self.notifications_post(s,data);return
    if not sec.consume([('actions',s['user'],30,60)]):self.send_error(429);return
    if self.path=='/api/action':
     try:
-     if data['op'] in ('download_all','cancel_all'):
-      if data['selection'] and data['op']!='download_all':raise ValueError('Unexpected selection')
-      if not sec.consume([('bulk-'+data['op'],s['user'],12 if data['op']=='cancel_all' else 4,300)]):self.send_error(429);return
-      self.json_output(episodes.submit_all(sys.modules[__name__],data['episode'],data['selection']) if data['op']=='download_all' else episodes.cancel_all(sys.modules[__name__],data['episode']),202);return
+     if data['op'] in ('download_all','cancel_all','download_season','cancel_season'):
+      if data['selection'] and data['op'] not in ('download_all','download_season'):raise ValueError('Unexpected selection')
+      if not sec.consume([('bulk-'+data['op'],s['user'],12 if data['op'] in ('cancel_all','cancel_season') else 4,300)]):self.send_error(429);return
+      self.json_output(episodes.submit_all(sys.modules[__name__],data['episode'],data['selection'],data['op']=='download_season') if data['op'] in ('download_all','download_season') else episodes.cancel_all(sys.modules[__name__],data['episode'],data['op']=='cancel_season'),202);return
      is_plan=data['op']=='download' and not data['selection'] and any(str(e['id'])==data['episode'] and e.get('future') for group in episodes.snapshot(sys.modules[__name__]).get('upcoming',[]) for e in group['episodes'])
-     if data['op'] in ('search','search_all','download','watch_all') and not is_plan and not sec.consume([('torrent-search',s['user'],12,300)]):self.send_error(429);return
+     if data['op'] in ('search','search_all','search_season','download','watch_all','watch_season') and not is_plan and not sec.consume([('torrent-search',s['user'],12,300)]):self.send_error(429);return
      with LOCK:key=episodes.submit(sys.modules[__name__],data['op'],data['episode'],data['selection'])
      self.json_output({'job':key},202)
     except episodes.UserError as exc:self.json_output({'message':str(exc)},400)
@@ -532,7 +660,8 @@ class Handler(sec.HardenedHandler):
   if not AUTH_LOCK.acquire(blocking=False):self.send_error(503);return
   try:
    try:
-    r=requests.post(rt.connection('jellyfin')['base_url']+'/Users/AuthenticateByName',headers={'Authorization':'MediaBrowser Client="SeriesControl", Device="Web", DeviceId="series-control", Version="2.0"'},json={'Username':username,'Pw':data['password']},timeout=(3,10))
+    jellyfin_base=rt.jellyfin_api_base()
+    r=requests.post(jellyfin_base+'/Users/AuthenticateByName',headers={'Authorization':'MediaBrowser Client="SeriesControl", Device="Web", DeviceId="series-control", Version="2.0"'},json={'Username':username,'Pw':data['password']},timeout=(3,10),allow_redirects=False)
     if r.status_code>=500:self.send_error(503);return
     if r.status_code!=200:denied();return
     result=r.json();user=result['User']
@@ -540,7 +669,7 @@ class Handler(sec.HardenedHandler):
     key,csrf=sec.new_session(user['Id'],self.headers.get('User-Agent',''),sec.cookies(self,'series_session'))
     # Do not retain a broad Jellyfin access token after checking the identity.
     if result.get('AccessToken'):
-     try:requests.post(rt.connection('jellyfin')['base_url']+'/Sessions/Logout',headers={'X-Emby-Token':result['AccessToken']},timeout=3)
+     try:requests.post(jellyfin_base+'/Sessions/Logout',headers={'X-Emby-Token':result['AccessToken']},timeout=3,allow_redirects=False)
      except requests.RequestException:pass
     target=sec.cookies(self,'series_download');location='/apps/'+target if target in mobile_artifact_names() else '/'
     self.send_response(303);self.send_header('Location',location);self.send_header('Set-Cookie',self.cookie('series_session',key,sec.cookie_age(self.headers.get('User-Agent',''))));self.send_header('Set-Cookie',self.cookie('series_login','',0));self.send_header('Set-Cookie',self.cookie('series_download','',0));self.end_headers()
@@ -552,6 +681,7 @@ if __name__=='__main__':
  if ROLE=='worker':worker()
  elif ROLE=='operations':episodes.run(sys.modules[__name__])
  else:
+  watch_settings.ensure_lock()
   bind=rt.panel_bind()
   http=sec.BoundedServer((bind['host'],bind['http']),Handler);tls=sec.BoundedServer((bind['host'],bind['https']),Handler);tls.slots=http.slots
   context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.minimum_version=ssl.TLSVersion.TLSv1_2;context.load_cert_chain(bind['cert'],bind['key']);tls.socket=context.wrap_socket(tls.socket,server_side=True,do_handshake_on_connect=False)

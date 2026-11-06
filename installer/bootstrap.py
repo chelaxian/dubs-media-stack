@@ -29,7 +29,7 @@ RU_EVIDENCE_LANGUAGE = 'Русская дорожка — язык метада�
 # Prowlarr: minimumSeeders belongs to the managed indexer (sync) profile,
 # never to quality profiles.
 PROWLARR_INDEXER_PROFILE = 'Dubs'
-MINIMUM_SEEDERS = 3
+MINIMUM_SEEDERS = 1
 
 # Panel-created per-studio clones of a Dubs base profile
 # (src/control.py chosen_profile: 'Сериал / база <baseId> / <studio> / mode').
@@ -127,19 +127,23 @@ class Arr:
         - upgradeAllowed False: only the panel's daily Pareto-safe pass upgrades.
         """
         schema = self.quality_schema()
-        cutoff = 0
-        for item in schema.get('items') or []:
+        definitions = {d['quality']['id']: d['quality']
+                       for d in self.call('qualitydefinition') or []}
+
+        def select(item):
             q = item.get('quality')
             if q:
-                res = _resolution(q.get('name', ''))
-                item['allowed'] = res in allowed_resolutions
+                item['allowed'] = quality_resolution(q, definitions) in allowed_resolutions
             else:
-                res = {_resolution((leaf.get('quality') or {}).get('name', ''))
-                       for leaf in item.get('items') or []}
-                res.discard(0)
-                item['allowed'] = res <= allowed_resolutions and bool(res)
-            if item['allowed']:
-                cutoff = q['id'] if q else item['id']
+                children = item.get('items') or []
+                selected = [select(child) for child in children]
+                item['allowed'] = bool(selected) and all(selected)
+            return item['allowed']
+
+        cutoff = 0
+        for item in schema.get('items') or []:
+            if select(item):
+                cutoff = item['quality']['id'] if item.get('quality') else item['id']
         if not cutoff:
             raise ArrError('quality schema has no qualities in %s' % (allowed_resolutions,))
         formats = self.call('customformat') or []
@@ -197,6 +201,8 @@ class Arr:
         'Transmission' (or anything else) stays alone. A foreign client that
         carries our managed name is a conflict, never silently overwritten.
         """
+        if category and directory:
+            raise ArrError('Transmission Category and Directory are mutually exclusive')
         schemas = self.call('downloadclient/schema')
         template = next(s for s in schemas if s['implementation'] == 'Transmission')
         values = {'host': CONTAINER_HOST, 'port': 9091,
@@ -246,7 +252,7 @@ class Arr:
             'baseUrl': app_base_url, 'prowlarrUrl': prowlarr_internal_url,
             'apiKey': app_api_key})
         template.update({'name': name, 'syncLevel': 'fullSync',
-                         'enable': True, 'tags': []})
+                         'tags': []})
         existing = next((a for a in self.call('applications')
                          if a.get('name') == name), None)
         if existing:
@@ -317,6 +323,7 @@ class Arr:
                                minimum_seeders=MINIMUM_SEEDERS):
         """Managed Prowlarr indexer (sync) profile with minimumSeeders.
 
+        API v1 /appprofile; indexers reference its id as appProfileId.
         Real shape: {name, enableRss, enableAutomaticSearch,
         enableInteractiveSearch, minimumSeeders, id}. minimumSeeders lives
         here (used for app sync / adding trackers), NOT in quality profiles.
@@ -325,13 +332,13 @@ class Arr:
         """
         payload = {'name': name, 'enableRss': True, 'enableAutomaticSearch': True,
                    'enableInteractiveSearch': True, 'minimumSeeders': minimum_seeders}
-        existing = next((p for p in self.call('indexerprofile') or []
+        existing = next((p for p in self.call('appprofile') or []
                          if p.get('name') == name), None)
         if existing:
             payload['id'] = existing['id']
-            return self.call('indexerprofile/%d' % existing['id'], 'PUT',
+            return self.call('appprofile/%d' % existing['id'], 'PUT',
                              payload)['id']
-        return self.call('indexerprofile', 'POST', payload)['id']
+        return self.call('appprofile', 'POST', payload)['id']
 
     # -- managed studio clone refresh -----------------------------------------
 
@@ -367,6 +374,16 @@ class Arr:
             self.call('qualityprofile/%d' % profile['id'], 'PUT', updated)
             refreshed.append(profile['name'])
         return refreshed
+
+
+def quality_resolution(quality, definitions):
+    """Resolve API quality IDs via qualitydefinition; unknown/raw fail closed."""
+    known = definitions.get(quality.get('id')) or {}
+    if (not known.get('id') or known.get('source') == 'televisionRaw'
+            or known.get('modifier') in ('rawhd', 'brdisk')
+            or known.get('name', '').casefold() in ('raw-hd', 'br-disk')):
+        return 0
+    return known.get('resolution', 0)
 
 
 def _resolution(quality_name):
@@ -469,9 +486,12 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         sonarr.refresh_profile_clones(p2160, scores, veto_format)
         + sonarr.refresh_profile_clones(p1080, scores, veto_format))
 
-    # 3. Clients/mappings/root folders + Prowlarr applications.
+    # 3. Explicit directories isolate app queues as well as download destinations.
+    # Transmission rejects Category + Directory together; clear schema category
+    # defaults explicitly rather than relying on their current default values.
+    # Clients/mappings/root folders + Prowlarr applications.
     _wire_app(sonarr, deployment, conn, 'tvCategory', 'tvDirectory',
-              'dubs-tv', '/downloads/complete/tv', '/tv', prowlarr=prowlarr,
+              '', '/downloads/complete/tv', '/tv', prowlarr=prowlarr,
               app_implementation='Sonarr')
     report['sonarr'] = 'wired'
     if 'radarr' in conn and conn['radarr'].get('base_url'):
@@ -485,7 +505,7 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
             radarr.refresh_profile_clones(rp2160, radarr_scores, veto_format)
             + radarr.refresh_profile_clones(rp1080, radarr_scores, veto_format))
         _wire_app(radarr, deployment, conn, 'movieCategory', 'movieDirectory',
-                  'dubs-movies', '/downloads/complete/movies', '/movies',
+                  '', '/downloads/complete/movies', '/movies',
                   prowlarr=prowlarr, app_implementation='Radarr')
         report['radarr'] = 'wired'
     if 'lidarr' in conn and conn['lidarr'].get('base_url'):
@@ -508,7 +528,7 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         if cfg.get('default_tags'):
             defaults['defaultTags'] = list(cfg['default_tags'])
         _wire_app(lidarr, deployment, conn, 'musicCategory', 'musicDirectory',
-                  'dubs-music', '/downloads/complete/music', '/music',
+                  '', '/downloads/complete/music', '/music',
                   root_defaults=defaults, root_name='Dubs Music',
                   prowlarr=prowlarr, app_implementation='Lidarr')
         report['lidarr'] = 'wired'
@@ -521,9 +541,12 @@ def bootstrap(deployment, studios, veto_format, feed_url, log=lambda m: None):
         'minimumSeeders': MINIMUM_SEEDERS,
     }
 
-    # 5. MyShows feed CustomImport list (FUTURE monitoring only, never backlog).
+    # 5. CustomImport fetches the supplied URL directly; feed_url is the
+    # server base (also used for /health), while the JSON list lives at /series.
+    # FUTURE monitoring only, never backlog.
     report['import_list'] = sonarr.ensure_custom_import_list(
-        'MyShows watching (Dubs feed)', feed_url, p2160, root_folder_path='/tv')
+        'MyShows watching (Dubs feed)', feed_url.rstrip('/') + '/series',
+        p2160, root_folder_path='/tv')
     return report
 
 

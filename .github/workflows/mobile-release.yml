@@ -1,0 +1,355 @@
+name: mobile clients
+
+# Same-repository PRs register and run this new workflow before it reaches
+# the default branch. Fork PRs get no jobs, signing secrets or artifacts.
+# This workflow only uploads artifacts; it cannot publish or merge.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      phone_application_id:
+        description: Phone applicationId (build var, default = repo generic)
+        required: false
+        default: ''
+      phone_version_code:
+        description: Phone versionCode
+        required: false
+        default: '15'
+      phone_version_name:
+        description: Phone versionName
+        required: false
+        default: 1.4.0
+      tv_application_id:
+        description: TV applicationId (build var, default = repo generic)
+        required: false
+        default: ''
+      tv_version_code:
+        description: TV versionCode
+        required: false
+        default: '10'
+      tv_version_name:
+        description: TV versionName
+        required: false
+        default: 1.5.2-tv
+      ios_bundle_id:
+        description: iOS bundle identifier (build var, default = repo generic)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify shared panel with actual template
+        run: |
+          npm install --prefix "$RUNNER_TEMP/dubs-browser" playwright
+          export NODE_PATH="$RUNNER_TEMP/dubs-browser/node_modules"
+          node --check src/ui.js
+          python3 -m unittest discover -s tests -p test_clients_notifications.py
+          node mobile/tests/media-details-toggle.cjs
+          node mobile/tests/events-journal.cjs
+          node mobile/tests/panel-ui-smoke.cjs
+          node mobile/tests/panel-search.cjs
+          node mobile/tests/panel-card-actions.cjs
+          node mobile/tests/panel-compact-layout.cjs
+          node mobile/tests/settings-order.cjs
+          node mobile/tests/studio-order.cjs
+          node mobile/tests/phone-rows.cjs
+          node mobile/tests/tv-remote.cjs
+          node mobile/tests/tv-csp.cjs
+          node mobile/tests/tv-settings-navigation.cjs
+
+  android-tests:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Android ${{ matrix.api-level }} instrumented (4GB emulator)
+    env:
+      DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
+      DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
+      DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+      DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
+      DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+      DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 28   # Android 9, the minimum supported WebView
+            target: default
+          - api-level: 36   # Android 16, current runtime-notification rules
+            target: google_apis
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.2'
+
+      - name: Static checks (panel script syntax, mobile python compile)
+        run: |
+          node --check src/ui.js
+          python3 -m compileall -q mobile
+
+      - name: Plain JVM policy tests (no device)
+        run: |
+          cd mobile
+          javac -d /tmp/out-sa tests/ServerAddressTest.java android/app/src/main/java/app/dubs/panel/ServerAddress.java
+          java -cp /tmp/out-sa ServerAddressTest
+          javac -d /tmp/out-np tests/NotificationPolicyTest.java
+          cd ..
+          java -cp /tmp/out-np NotificationPolicyTest
+
+      # Official android-emulator-runner setup; applies only to this ephemeral Ubuntu runner.
+      - name: Enable and verify KVM access
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo '::error::KVM unavailable: runner requires a readable and writable /dev/kvm character device for accelerated Android tests.'
+            id
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+
+      - name: Instrumented tests on API ${{ matrix.api-level }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          ram-size: 4096M
+          disable-linux-hw-accel: false
+          emulator-options: -accel on -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: mobile/android
+          script: gradle :app:connectedDebugAndroidTest
+
+      - name: Upload private Android instrumentation reports
+        if: ${{ always() && github.event.repository.private == true && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports-api-${{ matrix.api-level }}-${{ github.run_attempt }}
+          path: |
+            mobile/android/app/build/outputs/androidTest-results/connected/**/*.xml
+            mobile/android/app/build/reports/androidTests/connected/**
+          retention-days: 3
+          if-no-files-found: warn
+
+  android-release:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    name: Android signed release artifacts
+    runs-on: ubuntu-latest
+    needs: [browser, android-tests]
+    timeout-minutes: 30
+    env:
+      DUBS_KEYSTORE_B64: ${{ secrets.DUBS_KEYSTORE_B64 }}
+      DUBS_SIGNING_PASSWORD: ${{ secrets.DUBS_SIGNING_PASSWORD }}
+      DUBS_KEY_ALIAS: ${{ secrets.DUBS_KEY_ALIAS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.2'
+
+      - name: Build signed release APKs (secrets from the private repo)
+        if: ${{ env.DUBS_KEYSTORE_B64 != '' }}
+        env:
+          DUBS_APPLICATION_ID: ${{ inputs.phone_application_id || vars.DUBS_ANDROID_APPLICATION_ID || 'app.dubs.panel' }}
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
+          DUBS_TV_APPLICATION_ID: ${{ inputs.tv_application_id || vars.DUBS_TV_APPLICATION_ID || 'app.dubs.panel.tv' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
+          DUBS_KEYSTORE: /tmp/dubs-signing.p12
+        run: |
+          printf '%s' "$DUBS_KEYSTORE_B64" | base64 -d > /tmp/dubs-signing.p12
+          cd mobile/android
+          gradle :app:lint :tv:lint :app:assembleRelease :tv:assembleRelease
+          rm -f /tmp/dubs-signing.p12
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f /tmp/dubs-signing.p12
+
+      - name: Build debug APKs (no signing secrets — sanity artifact only)
+        if: ${{ env.DUBS_KEYSTORE_B64 == '' }}
+        env:
+          DUBS_PHONE_VERSION_CODE: ${{ inputs.phone_version_code || '15' }}
+          DUBS_PHONE_VERSION_NAME: ${{ inputs.phone_version_name || '1.4.0' }}
+          DUBS_TV_VERSION_CODE: ${{ inputs.tv_version_code || '10' }}
+          DUBS_TV_VERSION_NAME: ${{ inputs.tv_version_name || '1.5.2-tv' }}
+        run: |
+          cd mobile/android
+          gradle :app:lint :tv:lint :app:assembleDebug :tv:assembleDebug
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: |
+            mobile/android/app/build/outputs/apk/**/*.apk
+            mobile/android/tv/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  ios:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    name: iOS simulator tests (minimum iOS 17) + TrollStore IPA
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Generate project with production bundle id override
+        working-directory: mobile/ios
+        env:
+          DUBS_IOS_BUNDLE_ID: ${{ inputs.ios_bundle_id || vars.DUBS_IOS_BUNDLE_ID || 'app.dubs.panel' }}
+        run: |
+          brew install xcodegen
+          if [ "$DUBS_IOS_BUNDLE_ID" != "app.dubs.panel" ]; then
+            sed -i.bak "s|PRODUCT_BUNDLE_IDENTIFIER: app.dubs.panel$|PRODUCT_BUNDLE_IDENTIFIER: $DUBS_IOS_BUNDLE_ID|" project.yml
+            rm -f project.yml.bak
+          fi
+          xcodegen generate
+
+      - name: Choose an available iPhone simulator (iOS 17 or newer)
+        run: |
+          xcrun simctl list devices available -j > /tmp/dubs-simulators.json
+          python3 - <<'PYSIM'
+          import json, os, re
+          from pathlib import Path
+          def device_priority(name):
+              if re.search(r'\bSE\b', name):
+                  return 0
+              if not re.search(r'\b(Pro|Max|Plus)\b', name):
+                  return 1
+              if not re.search(r'\b(Max|Plus)\b', name):
+                  return 2
+              return 3
+
+          choices = []
+          for runtime, devices in json.loads(Path('/tmp/dubs-simulators.json').read_text())['devices'].items():
+              match = re.fullmatch(r'com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-(\d+))?', runtime)
+              if match and int(match[1]) >= 17:
+                  for device in devices:
+                      if device['name'].startswith('iPhone') and device.get('isAvailable'):
+                          version = (int(match[1]), int(match[2]), int(match[3] or 0))
+                          choices.append((version, device_priority(device['name']), device['name'], device['udid'], runtime, device['state']))
+          if not choices:
+              raise SystemExit('No available installed iPhone simulator with iOS >=17')
+          version, _, name, identifier, runtime, state = min(choices)
+          print('Selected simulator: iOS', '.'.join(map(str, version)), runtime, name, identifier, 'state=' + state)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('DUBS_IOS_SIMULATOR_ID=' + identifier + '\n')
+              output.write('DUBS_IOS_SIMULATOR_STATE=' + state + '\n')
+          PYSIM
+
+      - name: Preboot selected iPhone simulator
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          if [[ "$DUBS_IOS_SIMULATOR_STATE" != "Booted" ]]; then
+            xcrun simctl boot "$DUBS_IOS_SIMULATOR_ID"
+          fi
+          xcrun simctl bootstatus "$DUBS_IOS_SIMULATOR_ID" -b
+
+      - name: Run UI and notification state tests on selected simulator
+        timeout-minutes: 15
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -project Dubs.xcodeproj -scheme Dubs \
+            -destination "platform=iOS Simulator,id=$DUBS_IOS_SIMULATOR_ID" \
+            -parallel-testing-enabled NO \
+            -derivedDataPath build/test CODE_SIGNING_ALLOWED=NO test \
+            | tee xcodebuild-test.log
+
+      - name: Build, ad-hoc sign and verify TrollStore IPA on macOS
+        working-directory: mobile/ios
+        run: |
+          set -euo pipefail
+          xcodebuild -project Dubs.xcodeproj -scheme Dubs \
+            -configuration Release -sdk iphoneos ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            -derivedDataPath build/release CODE_SIGNING_ALLOWED=NO build
+          mkdir Payload
+          cp -R build/release/Build/Products/Release-iphoneos/Dubs.app Payload/
+          python3 - <<'PYENT'
+          import plistlib, re, subprocess
+          from pathlib import Path
+          app = Path('Payload/Dubs.app')
+          info = plistlib.loads((app / 'Info.plist').read_bytes())
+          bundle = info['CFBundleIdentifier']
+          assert isinstance(bundle, str) and re.fullmatch(r'[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+', bundle), 'Invalid built bundle identifier'
+          assert info['CFBundleShortVersionString'] == '1.4.0', 'Unexpected marketing version'
+          assert info['CFBundleVersion'] == '14', 'Unexpected build number'
+          assert info['MinimumOSVersion'] == '17.0', 'Unexpected minimum OS'
+          assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Not an iPhoneOS app'
+          executable = info['CFBundleExecutable']
+          assert isinstance(executable, str) and executable and Path(executable).name == executable, 'Invalid executable name'
+          binary = app / executable
+          architectures = subprocess.check_output(['xcrun', 'lipo', '-archs', str(binary)], text=True).split()
+          assert architectures == ['arm64'], 'Expected device arm64 only'
+          build = subprocess.check_output(['xcrun', 'vtool', '-show-build', str(binary)], text=True)
+          assert re.search(r'^\s*platform\s+IOS\s*$', build, re.M | re.I), 'Mach-O platform must be iPhoneOS'
+          assert re.search(r'^\s*minos\s+17\.0(?:\.0)?\s*$', build, re.M), 'Mach-O minimum OS must be 17.0'
+          Path('trollstore-entitlements.plist').write_bytes(plistlib.dumps({'application-identifier': bundle, 'keychain-access-groups': [bundle]}))
+          PYENT
+          codesign --force --sign - --entitlements trollstore-entitlements.plist Payload/Dubs.app
+          codesign --verify --strict Payload/Dubs.app
+          codesign --display --entitlements :- Payload/Dubs.app > verified-entitlements.plist
+          python3 - <<'PYVERIFY'
+          import plistlib
+          from pathlib import Path
+          info = plistlib.loads(Path('Payload/Dubs.app/Info.plist').read_bytes())
+          bundle = info['CFBundleIdentifier']
+          entitlements = plistlib.loads(Path('verified-entitlements.plist').read_bytes())
+          expected = {'application-identifier': bundle, 'keychain-access-groups': [bundle]}
+          assert entitlements == expected, 'Signed entitlements must be exactly app-only identity and Keychain group; no team, wildcard, push, get-task-allow or debug entitlements'
+          PYVERIFY
+          zip -qry Dubs-1.4.0-TrollStore.ipa Payload
+          shasum -a 256 Dubs-1.4.0-TrollStore.ipa > Dubs-1.4.0-TrollStore.ipa.sha256.txt
+
+      - name: Upload iOS artifacts and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-artifacts
+          path: |
+            mobile/ios/Dubs-1.4.0-TrollStore.ipa
+            mobile/ios/Dubs-1.4.0-TrollStore.ipa.sha256.txt
+            mobile/ios/xcodebuild-test.log
+            mobile/ios/trollstore-entitlements.plist
+            mobile/ios/verified-entitlements.plist
+          if-no-files-found: error

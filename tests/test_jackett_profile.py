@@ -1,7 +1,7 @@
 """Offline tests for the Jackett -> Prowlarr sync profile selection.
 
 The sync must use the ACTUAL id of the managed 'Dubs' indexer (sync)
-profile (bootstrap-created, minimumSeeders=3) instead of a hardcoded
+profile (bootstrap-created, minimumSeeders=1) instead of a hardcoded
 appProfileId=1, create/repair only that profile, never touch the
 operator's 'Standard' profile, and never log credential values. All
 Prowlarr/Jackett interactions are fake objects; no tracker is contacted.
@@ -22,7 +22,7 @@ STANDARD = {'id': 1, 'name': 'Standard', 'enableRss': True,
             'minimumSeeders': 1}
 DUBS_ID7 = {'id': 7, 'name': 'Dubs', 'enableRss': True,
             'enableAutomaticSearch': True, 'enableInteractiveSearch': True,
-            'minimumSeeders': 3}
+            'minimumSeeders': 1}
 SCHEMA = {'implementation': 'Torznab', 'fields': [
     {'name': 'baseUrl', 'value': None},
     {'name': 'apiPath', 'value': '/api'},
@@ -124,7 +124,7 @@ class EnsureSyncProfileTests(unittest.TestCase):
         post = [c for c in p.calls if c[0] == 'POST' and
                 c[1].endswith('indexerprofile')]
         self.assertEqual(len(post), 1)
-        self.assertEqual(post[0][2]['minimumSeeders'], 3)
+        self.assertEqual(post[0][2]['minimumSeeders'], 1)
         self.assertEqual(post[0][2]['name'], 'Dubs')
         self.assertEqual(p.profiles[0]['name'], 'Standard')
         self.assertEqual(p.profiles[0]['minimumSeeders'], 1)
@@ -137,9 +137,9 @@ class EnsureSyncProfileTests(unittest.TestCase):
         put = [c for c in p.calls if c[0] == 'PUT']
         self.assertEqual(len(put), 1)
         self.assertTrue(put[0][1].endswith('indexerprofile/7'))
-        self.assertEqual(put[0][2]['minimumSeeders'], 3)
+        self.assertEqual(put[0][2]['minimumSeeders'], 1)
         self.assertEqual(p.profiles[0], STANDARD, 'Standard must not change')
-        self.assertEqual(p.profiles[1]['minimumSeeders'], 3)
+        self.assertEqual(p.profiles[1]['minimumSeeders'], 1)
 
 
 class SyncIndexersTests(unittest.TestCase):
@@ -155,7 +155,7 @@ class SyncIndexersTests(unittest.TestCase):
         saved = p.indexers[0]
         self.assertEqual(saved['appProfileId'], 7, 'not the hardcoded 1')
         fields = {f['name']: f['value'] for f in saved['fields']}
-        self.assertEqual(fields['torrentBaseSettings.appMinimumSeeders'], 3)
+        self.assertEqual(fields['torrentBaseSettings.appMinimumSeeders'], 1)
         self.assertEqual(fields['baseUrl'],
                          'http://jackett:9117/api/v2.0/indexers/tp/results/torznab')
         self.assertEqual(fields['apiKey'], 'jackett-secret-key')
