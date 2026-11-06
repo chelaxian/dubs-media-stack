@@ -9,6 +9,7 @@ import runtime as rt
 import upgrades
 import schedule_settings
 import notifications
+import tracker_merge
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
 VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ssa','.sub','.vtt','.mka','.ac3','.aac'}
 class UserError(Exception):pass
@@ -793,7 +794,7 @@ def run(m):
  for path in (m.STATE/'requests').glob('*.json'):
   status=m.WORKER_STATE/'jobs'/path.name
   if read(status,{}).get('state') in ('queued','running'):status.unlink(missing_ok=True)
- active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0
+ active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0;last_merge=time.time();merge_pool=concurrent.futures.ThreadPoolExecutor(max_workers=1);merge_future=None
  while True:
   now=time.time()
   if now-last_order>=30:
@@ -803,6 +804,8 @@ def run(m):
     try:future.result()
     except Exception:logging.warning('Episode worker task failed')
     active.pop(key,None)
+  if now-last_merge>=60 and (merge_future is None or merge_future.done()):
+   merge_future=merge_pool.submit(tracker_merge.run_one,sys.modules[__name__],m);last_merge=now
   # Bounded observer for downloads the panel did not start (Sonarr automatic
   # search / lists / Jellyseerr): read-only Sonarr queue pass, its own slot.
   if now-last_observe>=60 and 'notifications-observe' not in active and len(set(active.values()))<2:
