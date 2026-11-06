@@ -178,7 +178,7 @@ def submit_all(m,anchor,selection='',season_only=False):
  groups=snapshot(m).get('released',[])
  group=next((g for g in groups if g.get('seriesId')==e['seriesId']),None)
  if not group:raise UserError('Нет вышедших непросмотренных серий')
- eps=[x for x in group['episodes'] if not x.get('future') and not x.get('hasFile') and (not season_only or x.get('season')==e.get('season'))]
+ eps=[x for x in group['episodes'] if not x.get('future') and (selection or not x.get('hasFile')) and (not season_only or x.get('season')==e.get('season'))]
  if selection:
   allowed=selected_bulk_ids(m,selection,e['seriesId']);eps=[x for x in eps if str(x['id']) in allowed]
   if not eps:raise UserError('В этой раздаче нет нужных непросмотренных серий')
@@ -187,7 +187,7 @@ def submit_all(m,anchor,selection='',season_only=False):
   for path in (m.STATE/'requests').glob('*.json'):
    req=read(path,{})
    if req.get('op')!='download':continue
-   if result(m,path.stem).get('state') not in ('error','cancelled'):
+   if result(m,path.stem).get('state') not in ('error','cancelled','done'):
     requests_by_episode[req.get('episode')]=path.stem
   jobs=[];batch=secrets.token_hex(16)
   for item in eps:
@@ -233,21 +233,55 @@ def season_hints(title):
  found=set(int(x) for x in re.findall(r'(?i)(?:\bS|season[\s._-]*|сезон[ыа]?[\s:._-]*)(\d{1,2})(?!\d)',title))
  for a,b in re.findall(r'(?i)(?:season|сезон[ыа]?)[\s:._-]*(\d{1,2})\s*[-–]\s*(\d{1,2})',title):found.update(range(int(a),min(int(b),int(a)+30)+1))
  return sorted(found)
-def series_match(parsed,title,expected):
+def title_queries(series,localized):
+ # Sonarr's TVDB-linked aliases and MyShows localized title are trusted metadata.
+ # Strip only a trailing release-year disambiguator for search, never for identity.
+ values=[re.sub(r'\s*[\[(](?:19|20)\d{2}[\])]\s*$','',series.get('title','')),localized,series.get('title','')]
+ values += [x.get('title','') for x in series.get('alternateTitles',[]) if isinstance(x,dict)]
+ result=[];seen=set()
+ for name in values:
+  name=re.sub(r'\s+',' ',name or '').strip()
+  if len(name)<2 or len(name)>160 or name.casefold() in seen:continue
+  seen.add(name.casefold());result.append(name)
+  if len(result)>=4:break
+ return result
+
+def series_match(parsed,title,expected,identifiers=None):
  if not expected:return True
  mapped=(parsed.get('series') or {}).get('id')
  if mapped is not None:return mapped==expected['id']
+ # Only compare provider IDs of the same type; a conflict is authoritative.
+ identifiers=identifiers or {}
+ compared=[]
+ for key in ('tvdbId','tmdbId','imdbId'):
+  actual=identifiers.get(key);want=expected.get(key)
+  if actual and str(actual) not in ('0','tt0000000') and want and str(want) not in ('0','tt0000000'):
+   def canonical_id(x):return str(x).lower().removeprefix('tt').lstrip('0') or '0'
+   compared.append(canonical_id(actual)==canonical_id(want))
+ if compared:return all(compared)
  info=parsed.get('parsedEpisodeInfo') or {};candidate=info.get('seriesTitle') or ''
  def slug(value):return re.sub(r'[^a-zа-яё0-9]','',re.sub(r'\s*[\[(](?:19|20)\d{2}[\])]','',value).casefold())
- aliases=[expected['title'],expected.get('_myshowsTitle','')]+[x.get('title','') for x in expected.get('alternateTitles',[])]
- known={slug(x) for x in aliases if x}
- # Trackers concatenate Russian and English titles; accept exact known components only.
- joined={a+b for a in known for b in known if a!=b}
+ aliases=[expected['title'],expected.get('_myshowsTitle','')]+[x.get('title','') for x in expected.get('alternateTitles',[]) if isinstance(x,dict)]
+ known={slug(x) for x in aliases if x};joined={a+b for a in known for b in known if a!=b}
  parts=[slug(x.strip()) for x in re.split(r'\s*/\s*',candidate) if x.strip()]
- if not candidate or not (slug(candidate) in known|joined or parts and all(x in known for x in parts)):return False
- # Remakes with a year in the canonical title require that exact year in the release.
+ exact=bool(candidate) and (slug(candidate) in known|joined or parts and all(x in known for x in parts))
+ # Extra release-name wording is accepted only with two independently sourced,
+ # distinct script aliases (MyShows + Sonarr) and bounded title-word matches.
+ # This does not turn a substring of one title into an identity match.
+ original=re.sub(r'\s*[\[(](?:19|20)\d{2}[\])]\s*$','',expected.get('title','')).strip()
+ localized=(expected.get('_myshowsTitle') or '').strip()
+ def phrase(value):
+  words=re.findall(r'[a-zа-яё0-9]+',value.casefold())
+  return r'(?<![a-zа-яё0-9])'+r'[^a-zа-яё0-9]+'.join(map(re.escape,words))+r'(?![a-zа-яё0-9])' if words else r'(?!)'
+ distinct_scripts=bool(re.search(r'[a-z]',original,re.I) and re.search(r'[а-яё]',localized,re.I))
+ dual=bool(candidate and distinct_scripts and len(slug(original))>=4 and len(slug(localized))>=4 and re.search(phrase(original),candidate.casefold()) and re.search(phrase(localized),candidate.casefold()))
+ if not exact and not dual:return False
+ # A later season may carry its air year rather than the first season's year.
+ # Accept that year only with BOTH independently sourced title variants.
  if re.search(r'[\[(](?:19|20)\d{2}[\])]',expected['title']):
-  return str(expected.get('year')) in re.findall(r'(?<!\d)(?:19|20)\d{2}(?!\d)',title)
+  years=set(re.findall(r'(?<!\d)(?:19|20)\d{2}(?!\d)',title))
+  if str(expected.get('year')) in years:return True
+  return bool(dual and expected.get('_airYear') and str(expected['_airYear']) in years)
  return True
 
 def normalize(m,row,profile,source,expected=None):
@@ -260,7 +294,7 @@ def normalize(m,row,profile,source,expected=None):
  # Prowlarr results are parsed locally by Sonarr to apply the exact same rules.
  if source=='prowlarr':
   parsed=m.api('parse?title='+urllib.parse.quote(title));info=parsed.get('parsedEpisodeInfo') or {};q=info.get('quality',{});qinfo=q.get('quality',{});cfs=parsed.get('customFormats',[]);score=sum(scores.get(x['id'],0) for x in cfs);veto=any(x.get('name')==rt.settings()['veto_format'] for x in cfs)
-  if expected and not series_match(parsed,title,expected):matches_series=False;reasons.append('Sonarr не подтвердил соответствие этому сериалу')
+  if expected and not series_match(parsed,title,expected,row):matches_series=False;reasons.append('Sonarr не подтвердил соответствие этому сериалу')
   numbers=info.get('episodeNumbers',[])
   span=re.search(r'(?i)\bS(\d{1,2})E(\d{1,3})\s*[-–]\s*(?:E)?(\d{1,3})(?!\d)',title)
   if span and int(span[1])==info.get('seasonNumber') and 0<int(span[2])<=int(span[3])<=100:numbers=list(range(int(span[2]),int(span[3])+1))
@@ -294,14 +328,14 @@ def waiting_summary(items,errors):
 
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
- series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
+ series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];series['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
  started=time.time();deadline=started+65;sources=[]
  try:sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
  except Exception:pass
  pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
  tasks={pool.submit(sonarr_search,m,e):('sonarr','Sonarr')}
  if sources:
-  for query in dict.fromkeys([e['seriesTitle'],series['title']]):
+  for query in title_queries(series,e['seriesTitle']):
    for indexer in sources:tasks[pool.submit(indexer_api,m,'search?type=search&indexerIds='+str(int(indexer['id']))+'&query='+urllib.parse.quote(query))]=('prowlarr',str(indexer.get('name','Трекер'))[:100])
  else:tasks[pool.submit(indexer_api,m,'search?type=search&query='+urllib.parse.quote(series['title']))]=('prowlarr','Prowlarr')
  total=len(tasks);completed=0;last_publish=0
@@ -484,6 +518,46 @@ def select_files(files,e,row):
   if Path(p).suffix.casefold() in AUX and (file_episode(p,hint)==(e['season'],e['number']) or (file_episode(p,hint) is None and any(str(Path(p).with_suffix('')).casefold().startswith(stem+sep) for sep in ['.',' ','_','-']))):wanted.append(i)
  return wanted,video[0]
 
+def preserve_replaced_file(m,current,e):
+ """Keep a verified copy on the writable torrent volume before replacement."""
+ mp=rt.media_paths();raw=(current.get('episodeFile') or {}).get('path','')
+ prefix=mp['sonarr_tv'].rstrip('/')+'/'
+ if not raw.startswith(prefix):raise UserError('Путь текущего файла не подтверждён; замена остановлена')
+ path=Path(mp['shows_host'])/raw.removeprefix(prefix)
+ try:
+  with m.parent_fd(path,mp['shows_host']) as (fd,name):
+   original=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+   try:
+    info=os.fstat(original)
+    if not __import__('stat').S_ISREG(info.st_mode):raise ValueError('Not a regular file')
+    with m.parent_fd(Path(mp['torrent_host'])/'.dubs-replacement-backups',mp['torrent_host']) as (root,dirname):
+     try:os.mkdir(dirname,0o700,dir_fd=root)
+     except FileExistsError:pass
+     dest=os.open(dirname,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=root)
+     try:
+      backup=str(e['sonarrId'])+'-'+str(e['_upgradeFileId'])
+      # An existing backup is never trusted or overwritten: use a unique name.
+      tmp=backup+'-'+secrets.token_hex(8)
+      out=os.open(tmp,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600,dir_fd=dest)
+      try:
+       with os.fdopen(out,'wb') as target:
+        while True:
+         chunk=os.read(original,1024*1024)
+         if not chunk:break
+         target.write(chunk)
+        target.flush();os.fsync(target.fileno())
+       after=os.fstat(original);saved=os.stat(tmp,dir_fd=dest,follow_symlinks=False)
+       if (info.st_size,info.st_mtime_ns)!=(after.st_size,after.st_mtime_ns) or saved.st_size!=info.st_size:raise ValueError('Backup mismatch')
+      except BaseException:
+       try:os.unlink(tmp,dir_fd=dest)
+       except OSError:pass
+       raise
+     finally:os.close(dest)
+   finally:os.close(original)
+ except (OSError,ValueError) as exc:
+  logging.warning('Replacement backup failed: %s',type(exc).__name__)
+  raise UserError('Не удалось сохранить исходный файл перед заменой; импорт остановлен')
+
 def request_download(m,key,e,item,metainfo=None,start=True):
  row=item['row'];display=item['display']
  if not display['allowed']:raise UserError('Раздача не соответствует обязательным условиям языка, озвучки, качества или сидов')
@@ -492,8 +566,8 @@ def request_download(m,key,e,item,metainfo=None,start=True):
  if current.get('hasFile') and not e.get('_upgradeFileId'):return {'state':'done','message':'Эта серия уже есть в медиатеке'}
  if e.get('_upgradeFileId') and current.get('episodeFileId')!=e['_upgradeFileId']:raise UserError('Файл серии уже изменился; повторная замена отменена')
  if e.get('_upgradeFileId'):
-  if not upgrades.replacement_allowed(m,e,current,row.get('title',''),row.get('quality',{})):raise UserError('Эта раздача больше не улучшает действующие предпочтения')
-  sr=m.api('series/'+str(e['seriesId']));sr['_myshowsTitle']=e['seriesTitle'];profile=m.api('qualityprofile/'+str(sr['qualityProfileId']))
+  if not e.get('_manualReplace') and not upgrades.replacement_allowed(m,e,current,row.get('title',''),row.get('quality',{})):raise UserError('Эта раздача больше не улучшает действующие предпочтения')
+  sr=m.api('series/'+str(e['seriesId']));sr['_myshowsTitle']=e['seriesTitle'];sr['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(sr['qualityProfileId']))
   checked,row=normalize(m,row,profile,'prowlarr',sr)
   if not checked['allowed']:raise UserError('Раздача не прошла повторную проверку текущих предпочтений')
  report(m,key,'running','Подходящая раздача найдена: получаем торрент и проверяем файлы серии',episode=e)
@@ -620,16 +694,19 @@ def process(m,key,job):
     schedule_change(m,eid,{'episode':e,'job':key,'last':time.time(),'restoreMonitor':False});report(m,key,'waiting','Заказ сохранён: ожидаем сопоставления эпизода с медиатекой');return
    current=m.api('episode/'+str(e['sonarrId'])) if e.get('sonarrId') else {}
    scheduled=read(m.WORKER_STATE/'scheduled-downloads.json',{});e['restoreMonitor']=scheduled.get(str(eid),{}).get('restoreMonitor',current.get('monitored',False))
-   if current.get('hasFile'):
-    schedule_change(m,eid,None);report(m,key,'done','Эта серия уже есть в медиатеке');return
    selection=job.get('selection','')
+   if current.get('hasFile') and not selection:
+    schedule_change(m,eid,None);report(m,key,'done','Эта серия уже есть в медиатеке');return
    if selection:
     cachekey,number=selection.split(':');cache=read(m.WORKER_STATE/'release-cache'/(cachekey+'.json'),{})
     if (cache.get('episode',{}).get('id')!=eid and str(eid) not in cache.get('episode',{}).get('bulkIds',{})) or cache.get('episode',{}).get('seriesId')!=e['seriesId'] or time.time()-cache.get('created',0)>1800:raise UserError('Результаты поиска устарели; выполните поиск снова')
     item=next((x for x in cache.get('items',[]) if x.get('tag')==number),None)
     if item is None:raise UserError('Раздача не найдена; повторите поиск')
+    if current.get('hasFile'):
+     if not current.get('episodeFileId'):raise UserError('Не удалось проверить существующий файл; замена остановлена')
+     e['_upgradeFileId']=current['episodeFileId'];e['_manualReplace']=True
     # Re-evaluate profile at click time; title/URL still come only from the trusted server cache.
-    sr=m.api('series/'+str(e['seriesId']));sr['_myshowsTitle']=e['seriesTitle'];profile=m.api('qualityprofile/'+str(sr['qualityProfileId']));display,row=normalize(m,item['row'],profile,'sonarr' if item['row'].get('customFormats') else 'prowlarr',sr);item={'row':row,'display':display}
+    sr=m.api('series/'+str(e['seriesId']));sr['_myshowsTitle']=e['seriesTitle'];sr['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(sr['qualityProfileId']));display,row=normalize(m,item['row'],profile,'sonarr' if item['row'].get('customFormats') else 'prowlarr',sr);item={'row':row,'display':display}
     status=request_download(m,key,e,item);schedule_change(m,eid,None);report(m,key,**status);return
    rows,errors=search(m,key,e);check_cancelled(m,key,eid);cache=read(m.WORKER_STATE/'release-cache'/(key+'.json'),{})
    candidates=[x for x in cache.get('items',[]) if x['display']['allowed']]
@@ -775,13 +852,17 @@ def monitor(m):
      if not upgrades.still_unwatched(m,e):
       requested['state']='cancelled';changed=True;report(m,key,'cancelled','Улучшение отменено: серия уже просмотрена');continue
      actual=m.api('episode/'+str(e['sonarrId']))
-     if not upgrades.replacement_allowed(m,e,actual,requested.get('title',''),requested.get('quality',{})):
+     if (actual.get('episodeFileId')!=e['_upgradeFileId'] or (not e.get('_manualReplace') and not upgrades.replacement_allowed(m,e,actual,requested.get('title',''),requested.get('quality',{})))):
       requested['state']='cancelled';changed=True;report(m,key,'cancelled','Улучшение отменено: файл серии уже изменился');continue
     f=t['files'][requested['video']];raw=t['downloadDir'].rstrip('/')+'/'+clean_file_path(f['name'])
     mp=rt.media_paths()
     if not raw.startswith(mp['downloads']+'/complete/tv/Panel/'):report(m,key,'error','Папка загрузки изменилась; импорт остановлен');continue
     path=mp['sonarr_torrents']+'/'+raw.removeprefix(mp['downloads']+'/');preview=m.api('manualimport?folder='+urllib.parse.quote(path.rsplit('/',1)[0])+'&filterExistingFiles=false');resource=next((x for x in preview if x.get('path')==path),None)
     if not resource:report(m,key,'error','Файл скачан, но Sonarr не распознал его для импорта');continue
+    if e.get('_manualReplace') and not requested.get('backupMade'):
+     try:
+      preserve_replaced_file(m,actual,e);requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+     except UserError as exc:report(m,key,'error',str(exc));continue
     imported={'path':path,'seriesId':e['seriesId'],'episodeIds':[e['sonarrId']],'quality':requested['quality'] if e.get('_upgradeFileId') else resource.get('quality') or requested['quality'],'languages':resource.get('languages') or [{'id':11,'name':'Russian'}],'releaseGroup':resource.get('releaseGroup') or '', 'indexerFlags':0}
     command=m.api('command','POST',{'name':'ManualImport','files':[imported],'importMode':'copy'});requested['command']=command['id'];requested['importAttempts']=requested.get('importAttempts',0)+1;requested['importAt']=time.time();requested['state']='importing';changed=True;report(m,key,'importing','Серия скачана. Добавляем в Jellyfin через Sonarr')
   if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)

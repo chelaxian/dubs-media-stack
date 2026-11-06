@@ -41,6 +41,14 @@ class Bulk(unittest.TestCase):
   with self.assertRaises(ValueError):ep.submit_all(None,'../1')
   with patch.object(ep,'episode',side_effect=ep.UserError('not watching')):
    with self.assertRaises(ep.UserError):ep.submit_all(None,'5')
+ def test_manual_selection_can_replace_downloaded_episode(self):
+  with tempfile.TemporaryDirectory() as root:
+   m=types.SimpleNamespace(STATE=Path(root)/'web',WORKER_STATE=Path(root)/'worker',LOCK=threading.RLock())
+   (m.STATE/'requests').mkdir(parents=True);(m.WORKER_STATE/'jobs').mkdir(parents=True)
+   view={'released':[{'seriesId':8,'episodes':[{'id':1,'hasFile':True},{'id':2}]}]}
+   with patch.object(ep,'episode',return_value={'seriesId':8}),patch.object(ep,'snapshot',return_value=view),patch.object(ep,'selected_bulk_ids',return_value={'1'}):
+    result=ep.submit_all(m,'1','b'*32+':'+'c'*20)
+   self.assertEqual([x['episode'] for x in result['jobs']],[1])
 if __name__=='__main__':unittest.main()
 
 class SeasonScope(unittest.TestCase):

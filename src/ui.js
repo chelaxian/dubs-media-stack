@@ -883,7 +883,7 @@ function renderTorrents() {
     meta.append(node("span", r.indexer, "source-badge"), document.createTextNode(r.quality + " · " + bytes(r.size) + " · Сиды: " + r.seeders + " · Личеры: " + ((_a2 = r.leechers) != null ? _a2 : "—") + " · Скачивания: " + ((_b2 = r.downloads) != null ? _b2 : "—") + " · " + date(r.published)));
     content.append(meta, node("div", r.voices.join(" / "), "torrent-meta"));
     if (!r.allowed) content.append(node("div", (r.rejections || []).join("; "), "torrent-why"));
-    const button = node("button", "Скачать");
+    const button = node("button", dialogEpisode && (dialogEpisode.hasFile || dialogEpisode.bulk) ? "Скачать / заменить" : "Скачать");
     button.type = "button";
     button.disabled = !r.allowed;
     button.addEventListener("click", () => downloadSelection(dialogEpisode, r.key, button));
