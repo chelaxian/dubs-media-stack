@@ -660,7 +660,9 @@ def request_download(m,key,e,item,metainfo=None,start=True):
    # OBSERVES transfer progress (bytes>0 or rate>0) on the selected files —
    # torrent-start acceptance alone is not a transfer.
    owned['episodes'].append({'job':key,'episode':e,'video':video,'wanted':wanted,'state':'downloading','announceStart':True,'restoreMonitor':e.get('restoreMonitor',current.get('monitored',False)),'quality':row.get('quality'),'title':row.get('title')})
-  if not start:owned['startPending']=time.time()
+  # Persist the start intent before the RPC, so a worker interruption or a
+  # transiently stopped torrent cannot leave a selected episode stuck forever.
+  owned['startPending']=time.time();owned['startAttempts']=0;owned.pop('startFailed',None)
   managed[h]=owned;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
   if start:m.trpc('torrent-start',{'ids':[tid]})
  return {'state':'downloading','message':'Загружаются только заказанные серии и их субтитры','hash':h}
@@ -832,7 +834,6 @@ def process_batch(m,members):
     if started:
      for h in started:
       m.trpc('torrent-start',{'ids':[h]})
-      managed[h].pop('startPending',None)
      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
  except UserError as exc:
   if str(exc)=='Заказ отменён':
@@ -851,10 +852,23 @@ def monitor(m):
   for h,entry in managed.items():
    t=lookup.get(h)
    if not t:continue
-   # Resume only an interrupted panel batch, never a torrent paused by the user.
-   if entry.get('startPending') and time.time()-entry['startPending']>=180 and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[])):
-    if t.get('status')==0:m.trpc('torrent-start',{'ids':[h]})
-    entry.pop('startPending',None);changed=True
+   # Only an unconfirmed panel start is recoverable; after Transmission has
+   # started the torrent, a later user pause must never be overridden.
+   if entry.get('startPending'):
+    if t.get('status') in (3,4,5,6):
+     entry.pop('startPending',None);entry.pop('startAttempts',None);changed=True
+    elif (t.get('status')==0 and time.time()-entry['startPending']>=60 and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[]))):
+     attempts=entry.get('startAttempts',0)
+     if attempts<3:
+      m.trpc('torrent-start',{'ids':[h]});entry['startPending']=time.time();entry['startAttempts']=attempts+1;changed=True
+     else:
+      entry.pop('startPending',None);entry.pop('startAttempts',None);entry['startFailed']=True;changed=True
+   if entry.get('startFailed'):
+    if t.get('status') in (3,4,5,6):entry.pop('startFailed',None);changed=True
+    else:
+     for requested in entry.get('episodes',[]):
+      if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток')
+     continue
    for requested in entry['episodes']:
     if requested['state'] in ('done','cancelled'):continue
     e=requested['episode'];key=requested['job']
