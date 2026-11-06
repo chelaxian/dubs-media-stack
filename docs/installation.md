@@ -166,7 +166,7 @@ RU-veto, клиент «Dubs Transmission» с отдельными катало
 загрузок и очереди приложений. Сохраняются
 remote-path mapping `transmission: /downloads/ → /torrents/`, приложения
 «Sonarr/Radarr/Lidarr (Dubs)» в Prowlarr, профиль индексаторов «Dubs»
-(minimumSeeders = 3) и импорт-лист «MyShows watching (Dubs feed)»
+(minimumSeeders = 1) и импорт-лист «MyShows watching (Dubs feed)»
 (только **будущие** эпизоды: `shouldMonitor=future`, `monitorNewItems=all`,
 без бэклога, root folder `/tv`). Radarr получает ту же полную политику озвучки;
 Lidarr работает через API v1 с музыкальными профилями — без сериальных

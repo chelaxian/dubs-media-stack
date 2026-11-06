@@ -435,7 +435,7 @@ if SMOKE:
             profiles = [p for p in prowlarr.call('appprofile')
                         if p['name'] == 'Dubs']
             self.assertEqual(len(profiles), 1)
-            self.assertEqual(profiles[0]['minimumSeeders'], 3)
+            self.assertEqual(profiles[0]['minimumSeeders'], 1)
             self.assertEqual(profiles[0]['id'],
                              self.report['prowlarr_indexer_profile']['id'])
             for key in ('enableRss', 'enableAutomaticSearch', 'enableInteractiveSearch'):

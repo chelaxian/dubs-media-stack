@@ -470,7 +470,7 @@ class BootstrapContractTests(unittest.TestCase):
         report = run_bootstrap(stack)
         created = stack.posted('prowlarr', 'appprofile')[0]
         self.assertEqual(created['name'], 'Dubs')
-        self.assertEqual(created['minimumSeeders'], 3)
+        self.assertEqual(created['minimumSeeders'], 1)
         self.assertTrue(created['enableRss'])
         self.assertTrue(created['enableAutomaticSearch'])
         self.assertTrue(created['enableInteractiveSearch'])
@@ -478,7 +478,7 @@ class BootstrapContractTests(unittest.TestCase):
                        if p['name'] == 'Dubs')
         self.assertEqual(report['prowlarr_indexer_profile'],
                          {'name': 'Dubs', 'id': managed['id'],
-                          'minimumSeeders': 3})
+                          'minimumSeeders': 1})
         self.assertNotIn('qualityprofile', stack.state['prowlarr'])
         # Re-run repairs a stale managed profile without changing user objects.
         stored = next(p for p in stack.state['prowlarr']['appprofile']
@@ -492,10 +492,10 @@ class BootstrapContractTests(unittest.TestCase):
         self.assertEqual(len(stack.posted('prowlarr', 'appprofile')), 1)
         repaired = stack.objects('prowlarr', 'appprofile')[-1]
         self.assertTrue(repaired['enableRss'])
-        self.assertEqual(repaired['minimumSeeders'], 3)
+        self.assertEqual(repaired['minimumSeeders'], 1)
         self.assertFalse(stack.puts('prowlarr', 'appprofile/1'))
         self.assertEqual(stack.puts('prowlarr', 'appprofile/%d'
-                                    % managed['id'])[0]['minimumSeeders'], 3)
+                                    % managed['id'])[0]['minimumSeeders'], 1)
         standard = stack.objects('prowlarr', 'appprofile')[0]
         self.assertEqual(standard['minimumSeeders'], 1)
 

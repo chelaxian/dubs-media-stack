@@ -8,7 +8,7 @@ SRC=os.environ.get('DUBS_SRC',os.path.join(os.path.dirname(os.path.abspath(__fil
 sys.path.insert(0,SRC)
 import runtime as rt
 SYNC_PROFILE='Dubs'
-MINIMUM_SEEDERS=3
+MINIMUM_SEEDERS=1
 TIME_BUDGET=180
 
 def open_lock(state_parent):

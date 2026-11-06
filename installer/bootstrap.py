@@ -29,7 +29,7 @@ RU_EVIDENCE_LANGUAGE = 'Русская дорожка — язык метада�
 # Prowlarr: minimumSeeders belongs to the managed indexer (sync) profile,
 # never to quality profiles.
 PROWLARR_INDEXER_PROFILE = 'Dubs'
-MINIMUM_SEEDERS = 3
+MINIMUM_SEEDERS = 1
 
 # Panel-created per-studio clones of a Dubs base profile
 # (src/control.py chosen_profile: 'Сериал / база <baseId> / <studio> / mode').
