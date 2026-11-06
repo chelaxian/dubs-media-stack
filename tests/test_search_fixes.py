@@ -39,4 +39,12 @@ class SearchFixes(unittest.TestCase):
   self.assertFalse(episodes.supports_tv({'capabilities':{'categories':[{'id':6000}]}}));self.assertTrue(episodes.supports_tv({'capabilities':{'categories':[{'id':5000}]}}))
   text=episodes.waiting_summary([{'display':{'rejections':['Русский язык не подтверждён']}}],['offline'])
   self.assertIn('подходящих 0',text);self.assertIn('Русский язык',text);self.assertIn('Transmission ничего не передано',text)
+ def test_russian_audio_title_markers(self):
+  import re
+  sys.path.insert(0,str(_dubs_env.INSTALLER))
+  import bootstrap
+  pattern=re.compile(bootstrap.ru_evidence_regex([{'name':'Named','pattern':'does-not-match'},{'name':'Other','pattern':'x'}]))
+  for title in ['One Piece (Ван-Пис) S02 DUB (Videofilm Int.)','Title RUS','Title RU','Title Russia','Title Russian','Title РУС','Title перевод','Title озвучка','Title дубляж','Title dubbing','Title мультираздача']:
+   self.assertRegex(title,pattern)
+  self.assertNotRegex('English Title S02 DUB',pattern)
 if __name__=='__main__':unittest.main()

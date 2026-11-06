@@ -885,7 +885,7 @@ function renderTorrents() {
     if (!r.allowed) content.append(node("div", (r.rejections || []).join("; "), "torrent-why"));
     const button = node("button", dialogEpisode && (dialogEpisode.hasFile || dialogEpisode.bulk) ? "Скачать / заменить" : "Скачать");
     button.type = "button";
-    button.disabled = !r.allowed;
+    button.title = r.allowed ? "" : "Ручной выбор: проверьте предупреждения перед скачиванием";
     button.addEventListener("click", () => downloadSelection(dialogEpisode, r.key, button));
     row.append(content, button);
     parent.append(row);

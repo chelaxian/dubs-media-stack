@@ -49,6 +49,13 @@ class Bulk(unittest.TestCase):
    with patch.object(ep,'episode',return_value={'seriesId':8}),patch.object(ep,'snapshot',return_value=view),patch.object(ep,'selected_bulk_ids',return_value={'1'}):
     result=ep.submit_all(m,'1','b'*32+':'+'c'*20)
    self.assertEqual([x['episode'] for x in result['jobs']],[1])
+ def test_manual_bulk_selection_allows_ineligible_result(self):
+  import time
+  with tempfile.TemporaryDirectory() as root:
+   m=types.SimpleNamespace(WORKER_STATE=Path(root));(m.WORKER_STATE/'release-cache').mkdir()
+   key='b'*32;tag='c'*20
+   ep.atomic(m.WORKER_STATE/'release-cache'/(key+'.json'),{'created':time.time(),'episode':{'seriesId':8,'bulkIds':{'1':1}},'items':[{'tag':tag,'display':{'allowed':False},'row':{'episodeNumbers':[1]}}]})
+   self.assertEqual(ep.selected_bulk_ids(m,key+':'+tag,8),{'1'})
 if __name__=='__main__':unittest.main()
 
 class SeasonScope(unittest.TestCase):

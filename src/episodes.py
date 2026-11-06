@@ -168,7 +168,7 @@ def selected_bulk_ids(m,selection,series_id):
  scope=cache.get('episode',{})
  if scope.get('seriesId')!=series_id or not scope.get('bulkIds') or time.time()-cache.get('created',0)>1800:raise UserError('Результаты поиска устарели; выполните поиск снова')
  item=next((x for x in cache.get('items',[]) if x.get('tag')==tag),None)
- if not item or not item['display']['allowed']:raise UserError('Раздача не подходит требованиям')
+ if not item:raise UserError('Раздача не найдена; повторите поиск')
  numbers=item['row'].get('episodeNumbers') or []
  return {eid for eid,number in scope['bulkIds'].items() if not numbers or number in numbers}
 
@@ -560,7 +560,7 @@ def preserve_replaced_file(m,current,e):
 
 def request_download(m,key,e,item,metainfo=None,start=True):
  row=item['row'];display=item['display']
- if not display['allowed']:raise UserError('Раздача не соответствует обязательным условиям языка, озвучки, качества или сидов')
+ if not display['allowed'] and not e.get('_manualSelection'):raise UserError('Раздача не соответствует обязательным условиям языка, озвучки, качества или сидов')
  if not e.get('sonarrId'):raise UserError('Эпизод не сопоставлен с Sonarr')
  current=m.api('episode/'+str(e['sonarrId']))
  if current.get('hasFile') and not e.get('_upgradeFileId'):return {'state':'done','message':'Эта серия уже есть в медиатеке'}
@@ -569,7 +569,7 @@ def request_download(m,key,e,item,metainfo=None,start=True):
   if not e.get('_manualReplace') and not upgrades.replacement_allowed(m,e,current,row.get('title',''),row.get('quality',{})):raise UserError('Эта раздача больше не улучшает действующие предпочтения')
   sr=m.api('series/'+str(e['seriesId']));sr['_myshowsTitle']=e['seriesTitle'];sr['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(sr['qualityProfileId']))
   checked,row=normalize(m,row,profile,'prowlarr',sr)
-  if not checked['allowed']:raise UserError('Раздача не прошла повторную проверку текущих предпочтений')
+  if not checked['allowed'] and not e.get('_manualSelection'):raise UserError('Раздача не прошла повторную проверку текущих предпочтений')
  report(m,key,'running','Подходящая раздача найдена: получаем торрент и проверяем файлы серии',episode=e)
  if metainfo is None:
   data,magnet=safe_download(m,row.get('downloadUrl') or row.get('magnetUrl',''))
@@ -702,6 +702,7 @@ def process(m,key,job):
     if (cache.get('episode',{}).get('id')!=eid and str(eid) not in cache.get('episode',{}).get('bulkIds',{})) or cache.get('episode',{}).get('seriesId')!=e['seriesId'] or time.time()-cache.get('created',0)>1800:raise UserError('Результаты поиска устарели; выполните поиск снова')
     item=next((x for x in cache.get('items',[]) if x.get('tag')==number),None)
     if item is None:raise UserError('Раздача не найдена; повторите поиск')
+    e['_manualSelection']=True
     if current.get('hasFile'):
      if not current.get('episodeFileId'):raise UserError('Не удалось проверить существующий файл; замена остановлена')
      e['_upgradeFileId']=current['episodeFileId'];e['_manualReplace']=True
@@ -863,7 +864,7 @@ def monitor(m):
      try:
       preserve_replaced_file(m,actual,e);requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
      except UserError as exc:report(m,key,'error',str(exc));continue
-    imported={'path':path,'seriesId':e['seriesId'],'episodeIds':[e['sonarrId']],'quality':requested['quality'] if e.get('_upgradeFileId') else resource.get('quality') or requested['quality'],'languages':resource.get('languages') or [{'id':11,'name':'Russian'}],'releaseGroup':resource.get('releaseGroup') or '', 'indexerFlags':0}
+    imported={'path':path,'seriesId':e['seriesId'],'episodeIds':[e['sonarrId']],'quality':requested['quality'] if e.get('_upgradeFileId') else resource.get('quality') or requested['quality'],'languages':resource.get('languages') or ([] if e.get('_manualSelection') else [{'id':11,'name':'Russian'}]),'releaseGroup':resource.get('releaseGroup') or '', 'indexerFlags':0}
     command=m.api('command','POST',{'name':'ManualImport','files':[imported],'importMode':'copy'});requested['command']=command['id'];requested['importAttempts']=requested.get('importAttempts',0)+1;requested['importAt']=time.time();requested['state']='importing';changed=True;report(m,key,'importing','Серия скачана. Добавляем в Jellyfin через Sonarr')
   if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
 
