@@ -29,6 +29,27 @@ class Tests(unittest.TestCase):
  def test_download_url_ssrf(self):
   for url in ['file:///etc/passwd','http://169.254.169.254/x','http://localhost:22/x','https://evil.example/torrent']:
    with self.subTest(url=url),self.assertRaises(ep.UserError):ep.safe_download(None,url)
+ def test_download_retries_transient_indexer_error(self):
+  busy=Mock(status_code=503);ok=Mock(status_code=302,headers={'Location':'magnet:?xt=urn:btih:'+'a'*40})
+  with patch.object(ep,'validate_endpoint'),patch.object(ep,'_tls_verify',return_value=True),patch.object(ep.requests,'get',side_effect=[busy,ok]) as get,patch.object(ep.time,'sleep'):
+   data,magnet=ep.safe_download(None,'http://localhost/trusted')
+  self.assertIsNone(data);self.assertIn('urn%3Abtih',magnet);self.assertEqual(get.call_count,2);busy.close.assert_called_once()
+ def test_magnet_cache_verifies_exact_hash_and_preserves_trackers(self):
+  import hashlib
+  meta={b'info':{b'name':b'episode.mkv',b'length':10}}
+  data=ep.encode_bencode(meta);digest=hashlib.sha1(ep.encode_bencode(meta[b'info'])).hexdigest()
+  magnet='magnet:?xt=urn:btih:'+digest+'&tr=udp%3A%2F%2Ftracker.example%3A80%2Fannounce'
+  def fetch(cmd,**kw):
+   Path(cmd[cmd.index('--output')+1]).write_bytes(data);return types.SimpleNamespace(returncode=0)
+  with patch.object(ep.subprocess,'run',side_effect=fetch),patch.object(ep.rt,'settings',return_value={'proxy':''}):
+   result=ep.validate_metainfo(ep.cached_magnet_metadata(magnet))
+   self.assertEqual(result[b'info'],meta[b'info']);self.assertEqual(result[b'announce'],b'udp://tracker.example:80/announce')
+   with self.assertRaises(ValueError):ep.cached_magnet_metadata(magnet.replace(digest,'a'*40))
+ def test_magnet_metadata_uses_verified_fallback_on_timeout(self):
+  import subprocess
+  magnet='magnet:?xt=urn:btih:'+'a'*40
+  with patch.object(ep.subprocess,'run',side_effect=subprocess.TimeoutExpired('aria2c',100)),patch.object(ep,'cached_magnet_metadata',return_value=b'verified') as cache:
+   self.assertEqual(ep.metadata_only(None,magnet),b'verified');cache.assert_called_once_with(magnet)
  def setUp(self):
   statvfs=patch.object(ep.os,'statvfs',return_value=types.SimpleNamespace(f_bavail=10**7,f_frsize=4096))
   statvfs.start();self.addCleanup(statvfs.stop)
@@ -49,6 +70,16 @@ class Tests(unittest.TestCase):
  def test_paused_add_then_exact_files_then_start(self):
   with tempfile.TemporaryDirectory() as d,patch.object(ep,'safe_download',return_value=(b'fixture',None)):
    m,calls=self.fixture(Path(d));result=ep.request_download(m,'f'*32,E,{'row':ROW,'display':{'allowed':True}});self.assertEqual(result['state'],'downloading');self.assertTrue(calls[0][1]['paused']);start=next(i for i,c in enumerate(calls) if c[0]=='torrent-start');sets=[c for c in calls[:start] if c[0]=='torrent-set'];self.assertEqual(sets[0][1]['files-unwanted'],[0,1,2]);self.assertEqual(sets[1][1]['files-wanted'],[1])
+ def test_start_intent_survives_failed_start_rpc(self):
+  with tempfile.TemporaryDirectory() as d,patch.object(ep,'safe_download',return_value=(b'fixture',None)):
+   root=Path(d);m,calls=self.fixture(root);rpc=m.trpc
+   def fail_start(method,args):
+    if method=='torrent-start':raise RuntimeError('interrupted')
+    return rpc(method,args)
+   m.trpc=fail_start
+   with self.assertRaises(RuntimeError):ep.request_download(m,'f'*32,E,{'row':ROW,'display':{'allowed':True}})
+   entry=ep.read(root/'managed-downloads.json',{})['a'*40]
+   self.assertTrue(entry['startPending']);self.assertEqual(entry['wanted'],[1]);self.assertEqual(entry['episodes'][0]['state'],'downloading')
  def test_wrong_flags_never_starts(self):
   with tempfile.TemporaryDirectory() as d,patch.object(ep,'safe_download',return_value=(b'fixture',None)):
    m,calls=self.fixture(Path(d),broken_flags=True)

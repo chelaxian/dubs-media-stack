@@ -850,13 +850,14 @@ function options(id, values, label) {
   }
   if ([...select.options].some((o) => o.value === previous)) select.value = previous;
 }
+let searchWarnings = [];
 function rowsChanged(rows, warnings = []) {
   torrents = rows;
+  searchWarnings = warnings;
   options("torrent-season", rows.flatMap((x) => x.seasons), "Все сезоны");
   options("torrent-quality", rows.map((x) => x.quality), "Любое качество");
   options("torrent-voice", rows.flatMap((x) => x.voices), "Любая озвучка");
   $("torrent-filters").hidden = false;
-  if (warnings.length) $("torrent-status").textContent = warnings.join(". ");
   renderTorrents();
 }
 function renderTorrents() {
@@ -883,19 +884,21 @@ function renderTorrents() {
     meta.append(node("span", r.indexer, "source-badge"), document.createTextNode(r.quality + " · " + bytes(r.size) + " · Сиды: " + r.seeders + " · Личеры: " + ((_a2 = r.leechers) != null ? _a2 : "—") + " · Скачивания: " + ((_b2 = r.downloads) != null ? _b2 : "—") + " · " + date(r.published)));
     content.append(meta, node("div", r.voices.join(" / "), "torrent-meta"));
     if (!r.allowed) content.append(node("div", (r.rejections || []).join("; "), "torrent-why"));
-    const button = node("button", "Скачать");
+    const button = node("button", dialogEpisode && (dialogEpisode.hasFile || dialogEpisode.bulk) ? "Скачать / заменить" : "Скачать");
     button.type = "button";
-    button.disabled = !r.allowed;
+    button.title = r.allowed ? "" : "Ручной выбор: проверьте предупреждения перед скачиванием";
     button.addEventListener("click", () => downloadSelection(dialogEpisode, r.key, button));
     row.append(content, button);
     parent.append(row);
   }
   if (!rows.length) parent.append(node("p", "Нет раздач с такими фильтрами", "muted-empty"));
-  $("torrent-status").textContent = "Показано " + rows.length + " из " + torrents.length + " раздач";
+  const uniqueWarnings = [...new Set(searchWarnings)];
+  $("torrent-status").textContent = "Показано " + rows.length + " из " + torrents.length + " раздач" + (uniqueWarnings.length ? " · Поиск неполный: " + uniqueWarnings.slice(0, 4).join("; ") + (uniqueWarnings.length > 4 ? " и ещё " + (uniqueWarnings.length - 4) : "") : "");
 }
 async function openSearch(e) {
   dialogEpisode = e;
   torrents = [];
+  searchWarnings = [];
   searchStarted = Date.now();
   searchProgress = null;
   searchRunning = true;
@@ -906,7 +909,7 @@ async function openSearch(e) {
   if (!$("torrent-dialog").open) $("torrent-dialog").showModal();
   const cacheId = (e.bulk ? (e.seasonScope ? "season-" : "bulk-") : "") + e.id;
   const cached = searchCache.get(cacheId);
-  if (cached && Date.now() - cached.at < 6e5) {
+  if (cached && Date.now() - cached.at < 3e4) {
     searchRunning = false;
     updateSearchProgress();
     rowsChanged(cached.rows, cached.warnings);
@@ -925,7 +928,7 @@ async function openSearch(e) {
         rowsChanged(progress.rows, progress.warnings);
       }
     });
-    searchCache.set(cacheId, { at: Date.now(), rows: result.rows || [], warnings: result.warnings || [] });
+    if (!(result.warnings || []).length) searchCache.set(cacheId, { at: Date.now(), rows: result.rows || [], warnings: [] });
     if (dialogEpisode === e) {
       searchRunning = false;
       updateSearchProgress();

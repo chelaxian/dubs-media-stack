@@ -37,8 +37,9 @@ CLONE_PREFIX = 'Сериал / база '
 CLONE_BONUS = 1000000
 
 # Common RU-audio markers (in addition to the named studio patterns).
-RU_COMMON = (r'(?<![a-zа-яё0-9])(?:rus(?:sian)?|ru|русск(?:ий|ая|ое)|dvo|mvo'
-             r'|newstudio|tvshows|baibako|jaskier|амедиа)(?![a-zа-яё0-9])')
+RU_COMMON = (r'(?:(?<![a-zа-яё0-9])(?:rus(?:sian|sia)?|ru|рус(?:ск(?:ий|ая|ое|ого)?)?|dvo|mvo'
+             r'|newstudio|tvshows|baibako|jaskier|амедиа|перевод\w*|озвучк\w*|дубляж\w*|dubbing|мультираздач\w*)'
+             r'(?![a-zа-яё0-9])|(?=[\s\S]*[а-яё])(?=[\s\S]*(?<![a-zа-яё0-9])dub(?![a-zа-яё0-9])))')
 
 
 class ArrError(RuntimeError):

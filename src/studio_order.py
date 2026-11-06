@@ -84,7 +84,9 @@ def catchall_payload(studios):
         for s in studios if s['name']!=CATCHALL]
  # Same generic Russian markers as installer.bootstrap.RU_COMMON. A catchall
  # by exclusion alone would also match English releases; it is not evidence.
- russian=r'(?is)(?<![a-zа-яё0-9])(?:rus(?:sian)?|ru|русск(?:ий|ая|ое)|dvo|mvo|newstudio|tvshows|baibako|jaskier|амедиа)(?![a-zа-яё0-9])'
+ russian=(r'(?is)(?:(?<![a-zа-яё0-9])(?:rus(?:sian|sia)?|ru|рус(?:ск(?:ий|ая|ое|ого)?)?|dvo|mvo'
+          r'|newstudio|tvshows|baibako|jaskier|амедиа|перевод\w*|озвучк\w*|дубляж\w*|dubbing|мультираздач\w*)'
+          r'(?![a-zа-яё0-9])|(?=[\s\S]*[а-яё])(?=[\s\S]*(?<![a-zа-яё0-9])dub(?![a-zа-яё0-9])))')
  specs += [{'name':'Russian audio title','implementation':'ReleaseTitleSpecification',
             'negate':False,'required':False,'fields':[{'name':'value','value':russian}]},
            {'name':'Russian language','implementation':'LanguageSpecification',
