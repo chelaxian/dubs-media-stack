@@ -10,7 +10,11 @@ class SearchFixes(unittest.TestCase):
   self.assertFalse(episodes.series_match({'parsedEpisodeInfo':{'seriesTitle':'Other / Georgie and Mandys First Marriage'}},'',expected))
  def test_original_localized_and_alternate_queries_are_bounded(self):
   s={'title':'ONE PIECE (2023)','alternateTitles':[{'title':'One Piece'},{'title':'ワンピース'}]}
-  self.assertEqual(episodes.title_queries(s,'Ван-Пис'),['ONE PIECE','Ван-Пис','ONE PIECE (2023)','ワンピース'])
+  self.assertEqual(episodes.title_queries(s,'Ван-Пис'),['ONE PIECE','Ван-Пис','ワンピース'])
+ def test_preferred_trackers_receive_both_titles_first(self):
+  sources=[{'name':'AniDUB'}, {'name':'Kinozal'}, {'name':'RuTracker.org'}, {'name':'RuTor'}]
+  tasks=episodes.indexer_queries(sources,['One Piece','Ван-Пис'])
+  self.assertEqual([(s['name'],q) for s,q in tasks[:4]],[('RuTracker.org','One Piece'),('RuTracker.org','Ван-Пис'),('Kinozal','One Piece'),('Kinozal','Ван-Пис')])
  def test_later_season_dual_title_and_remake_protection(self):
   expected={'id':6,'title':'ONE PIECE (2023)','year':2023,'_airYear':'2026','_myshowsTitle':'Ван-Пис','alternateTitles':[{'title':'One Piece'}]}
   candidate='One Piece Большой куш (Ван-Пис) One Piece'

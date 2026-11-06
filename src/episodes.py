@@ -236,7 +236,7 @@ def season_hints(title):
 def title_queries(series,localized):
  # Sonarr's TVDB-linked aliases and MyShows localized title are trusted metadata.
  # Strip only a trailing release-year disambiguator for search, never for identity.
- values=[re.sub(r'\s*[\[(](?:19|20)\d{2}[\])]\s*$','',series.get('title','')),localized,series.get('title','')]
+ values=[re.sub(r'\s*[\[(](?:19|20)\d{2}[\])]\s*$','',series.get('title','')),localized]
  values += [x.get('title','') for x in series.get('alternateTitles',[]) if isinstance(x,dict)]
  result=[];seen=set()
  for name in values:
@@ -245,6 +245,13 @@ def title_queries(series,localized):
   seen.add(name.casefold());result.append(name)
   if len(result)>=4:break
  return result
+
+def indexer_queries(sources,queries):
+ # Launch both useful names on preferred indexers before slower secondary ones.
+ def priority(source):
+  name=source.get('name','').casefold()
+  return next((i for i,marker in enumerate(('rutracker','kinozal','lostfilm','noname','nnm','rutor')) if marker in name),6)
+ return [(source,query) for source in sorted(sources,key=priority) for query in queries]
 
 def series_match(parsed,title,expected,identifiers=None):
  if not expected:return True
@@ -335,8 +342,8 @@ def search(m,key,e,on_progress=None):
  pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
  tasks={pool.submit(sonarr_search,m,e):('sonarr','Sonarr')}
  if sources:
-  for query in title_queries(series,e['seriesTitle']):
-   for indexer in sources:tasks[pool.submit(indexer_api,m,'search?type=search&indexerIds='+str(int(indexer['id']))+'&query='+urllib.parse.quote(query))]=('prowlarr',str(indexer.get('name','Трекер'))[:100])
+  for indexer,query in indexer_queries(sources,title_queries(series,e['seriesTitle'])):
+   tasks[pool.submit(indexer_api,m,'search?type=search&indexerIds='+str(int(indexer['id']))+'&query='+urllib.parse.quote(query))]=('prowlarr',str(indexer.get('name','Трекер'))[:100])
  else:tasks[pool.submit(indexer_api,m,'search?type=search&query='+urllib.parse.quote(series['title']))]=('prowlarr','Prowlarr')
  total=len(tasks);completed=0;last_publish=0
  def publish():
