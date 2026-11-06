@@ -269,7 +269,7 @@ def normalize(m,row,profile,source,expected=None):
  known_ignorable=('episode is not monitored','season is not monitored','series is not monitored','full season','season pack','one or more episodes','episode was not requested')
  blocked=[r for r in reasons if not r.lower().startswith(known_ignorable)]
  seed=row.get('seeders');seed=seed if isinstance(seed,int) else 0
- if seed<3:allowed=False;reasons.append('Нужно минимум 3 сида')
+ if seed<1:allowed=False;reasons.append('Нет подтверждённых сидов')
  if blocked:allowed=False
  rank=0
  for index,quality in enumerate(profile['items']):
@@ -294,10 +294,10 @@ def waiting_summary(items,errors):
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
  series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
- started=time.time();deadline=started+150;sources=[]
+ started=time.time();deadline=started+65;sources=[]
  try:sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
  except Exception:pass
- pool=concurrent.futures.ThreadPoolExecutor(max_workers=6)
+ pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
  tasks={pool.submit(sonarr_search,m,e):('sonarr','Sonarr')}
  if sources:
   for query in dict.fromkeys([e['seriesTitle'],series['title']]):
@@ -329,7 +329,7 @@ def search(m,key,e,on_progress=None):
   publish()
   while tasks:
    if time.time()>=deadline:
-    errors.append('Лимит поиска 150 секунд: не дождались '+str(len(tasks))+' ответов; используем полученные результаты');break
+    errors.append('Лимит поиска 65 секунд: не дождались '+str(len(tasks))+' ответов; используем полученные результаты');break
    done,_=concurrent.futures.wait(tasks,timeout=1,return_when=concurrent.futures.FIRST_COMPLETED)
    if not done:
     publish();continue
@@ -537,6 +537,7 @@ def request_download(m,key,e,item,metainfo=None,start=True):
    # OBSERVES transfer progress (bytes>0 or rate>0) on the selected files —
    # torrent-start acceptance alone is not a transfer.
    owned['episodes'].append({'job':key,'episode':e,'video':video,'wanted':wanted,'state':'downloading','announceStart':True,'restoreMonitor':e.get('restoreMonitor',current.get('monitored',False)),'quality':row.get('quality'),'title':row.get('title')})
+  if not start:owned['startPending']=time.time()
   managed[h]=owned;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
   if start:m.trpc('torrent-start',{'ids':[tid]})
  return {'state':'downloading','message':'Загружаются только заказанные серии и их субтитры','hash':h}
@@ -700,7 +701,10 @@ def process_batch(m,members):
      if owned.get('wanted') and any(x['state'] not in ('cancelled','done') for x in owned.get('episodes',[])):
       started.append(h)
     if started:
-     for h in started:m.trpc('torrent-start',{'ids':[h]})
+     for h in started:
+      m.trpc('torrent-start',{'ids':[h]})
+      managed[h].pop('startPending',None)
+     atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
  except UserError as exc:
   if str(exc)=='Заказ отменён':
    for key in pending:report(m,key,'cancelled',str(exc))
@@ -718,6 +722,10 @@ def monitor(m):
   for h,entry in managed.items():
    t=lookup.get(h)
    if not t:continue
+   # Resume only an interrupted panel batch, never a torrent paused by the user.
+   if entry.get('startPending') and time.time()-entry['startPending']>=180 and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[])):
+    if t.get('status')==0:m.trpc('torrent-start',{'ids':[h]})
+    entry.pop('startPending',None);changed=True
    for requested in entry['episodes']:
     if requested['state'] in ('done','cancelled'):continue
     e=requested['episode'];key=requested['job']
