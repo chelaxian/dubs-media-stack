@@ -8,6 +8,7 @@ import studio_order
 import runtime as rt
 import upgrades
 import schedule_settings
+import recovery_settings
 import notifications
 import tracker_merge
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
@@ -238,7 +239,8 @@ def recheck_disabled_indexer(m):
   idx=status.get('indexerId')
   if not isinstance(idx,int) or idx<1 or not status.get('disabledTill'):continue
   prior=history.get(str(idx),{})
-  if now-prior.get('last',0)<prior.get('cooldown',3600):continue
+  delay=43200 if prior.get('cooldown',0)>=43200 else recovery_settings.current()['indexer_recheck_min']*60
+  if now-prior.get('last',0)<delay:continue
   # Persist before calling upstream: even a process crash cannot create a
   # rapid authentication loop on a protected tracker.
   history[str(idx)]={'last':now,'cooldown':3600,'result':'testing'};atomic(path,history,0o600)
@@ -368,7 +370,7 @@ def waiting_summary(items,errors):
  examples=list(dict.fromkeys(errors))[:4]
  return ('Ожидаем раздачу: найдено '+str(len(items))+' вариантов, подходящих 0. '+detail+
          ('. Поиск неполный: ошибок или незавершённых запросов '+str(len(errors))+'; '+ '; '.join(examples)+'; наличие подходящих раздач на затронутых источниках неизвестно' if errors else '')+
-         '. Повторная проверка через 15 минут; в Transmission ничего не передано')
+         '. Повторная проверка через '+str(recovery_settings.current()['search_retry_min'])+' мин; в Transmission ничего не передано')
 
 def transfer_message(t):
  if t.get('status')==0:return 'Загрузка на паузе в Transmission; автоматическое возобновление не подтверждено'
@@ -381,7 +383,7 @@ def transfer_message(t):
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
  series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];series['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
- started=time.time();deadline=started+120;sources=[]
+ started=time.time();search_seconds=recovery_settings.current()['search_deadline_sec'];deadline=started+search_seconds;sources=[]
  try:sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
  except Exception:pass
  pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
@@ -416,7 +418,7 @@ def search(m,key,e,on_progress=None):
   publish()
   while tasks:
    if time.time()>=deadline:
-    for _,name in tasks.values():errors.append('Источник '+name+': запрос не завершился за 120 секунд')
+    for _,name in tasks.values():errors.append('Источник '+name+': запрос не завершился за '+str(search_seconds)+' секунд')
     break
    done,_=concurrent.futures.wait(tasks,timeout=1,return_when=concurrent.futures.FIRST_COMPLETED)
    if not done:
@@ -903,7 +905,7 @@ def monitor(m):
    if not t:continue
    if entry.get('startFailed'):
     if not entry.get('startFailedAt'):entry['startFailedAt']=time.time();changed=True
-    elif time.time()-entry['startFailedAt']>=3600:
+    elif time.time()-entry['startFailedAt']>=recovery_settings.current()['start_backoff_min']*60:
      entry.pop('startFailed',None);entry.pop('startFailedAt',None);entry['pausedSince']=time.time();changed=True
    # A panel order remains active until it is explicitly cancelled. Recover
    # an unexpected stop only for its exact file selection, never an unrelated
@@ -916,27 +918,27 @@ def monitor(m):
     if indexes and all(isinstance(i,int) and 0<=i<len(stats) and stats[i].get('wanted') for i in indexes):
      progress=sum(stats[i].get('bytesCompleted',0) for i in indexes);now=time.time();obs=STALL_OBSERVATIONS.get(h)
      if not obs or obs['progress']!=progress or t.get('rateDownload',0)>0:STALL_OBSERVATIONS[h]={'progress':progress,'since':now}
-     elif now-obs['since']>=900:
+     elif now-obs['since']>=recovery_settings.current()['stall_min']*60:
       m.trpc('torrent-reannounce',{'ids':[h]});obs['since']=now
    else:STALL_OBSERVATIONS.pop(h,None)
    if t.get('status')==0 and active and not entry.get('startPending') and not entry.get('startFailed'):
     if not entry.get('pausedSince'):
      entry['pausedSince']=time.time();changed=True
-    elif time.time()-entry['pausedSince']>=120:
+    elif time.time()-entry['pausedSince']>=recovery_settings.current()['pause_grace_min']*60:
      expected=set(entry.get('wanted',[]))
      actual={i for i,s in enumerate(t.get('fileStats',[])) if s.get('wanted')}
      ready,_=rt.storage_ready()
      if ready and not t.get('error') and expected and actual==expected:
-      entry['startPending']=time.time()-60;entry['startAttempts']=0;changed=True
+      entry['startPending']=time.time()-recovery_settings.current()['start_retry_sec'];entry['startAttempts']=0;changed=True
       atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
    elif t.get('status')!=0 and entry.pop('pausedSince',None):changed=True
    # Persisted start intent also survives a worker or host restart.
    if entry.get('startPending'):
     if t.get('status') in (3,4,5,6):
      entry.pop('startPending',None);entry.pop('startAttempts',None);changed=True
-    elif (t.get('status')==0 and time.time()-entry['startPending']>=60 and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[]))):
+    elif (t.get('status')==0 and time.time()-entry['startPending']>=recovery_settings.current()['start_retry_sec'] and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[]))):
      attempts=entry.get('startAttempts',0)
-     if attempts<3:
+     if attempts<recovery_settings.current()['start_attempts']:
       entry['startPending']=time.time();entry['startAttempts']=attempts+1;changed=True
       atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
       m.trpc('torrent-start',{'ids':[h]})
@@ -946,7 +948,7 @@ def monitor(m):
     if t.get('status') in (3,4,5,6):entry.pop('startFailed',None);entry.pop('startFailedAt',None);changed=True
     else:
      for requested in entry.get('episodes',[]):
-      if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток; повторим через час')
+      if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток; повторим через '+str(recovery_settings.current()['start_backoff_min'])+' мин')
      continue
    for requested in entry['episodes']:
     if requested['state'] in ('done','cancelled'):continue
@@ -1024,7 +1026,7 @@ def run(m):
   now=time.time()
   if now-last_order>=30:
    studio_order.reconcile(m);last_order=now
-  if now-last_indexer_check>=300 and 'indexer-health' not in active and len(set(active.values()))<2:
+  if now-last_indexer_check>=60 and 'indexer-health' not in active and len(set(active.values()))<2:
    active['indexer-health']=POOL.submit(recheck_disabled_indexer,m);last_indexer_check=now
   for key,future in list(active.items()):
    if future.done():
@@ -1072,7 +1074,7 @@ def run(m):
    with CACHE_LOCK:
     scheduled=read(m.WORKER_STATE/'scheduled-downloads.json',{})
     for eid,item in scheduled.items():
-     if now>=item.get('notBefore',0) and now-item['last']>=900 and item['job'] not in active and len(set(active.values()))<2:
+     if now>=item.get('notBefore',0) and now-item['last']>=recovery_settings.current()['search_retry_min']*60 and item['job'] not in active and len(set(active.values()))<2:
       active[item['job']]=POOL.submit(process,m,item['job'],{'op':'download','episode':int(eid),'selection':''});item['last']=now
     if scheduled:atomic(m.WORKER_STATE/'scheduled-downloads.json',scheduled,0o600)
     last_retry=now

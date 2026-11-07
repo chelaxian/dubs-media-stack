@@ -17,6 +17,7 @@ import players
 import studio_order
 import watch_settings
 import schedule_settings
+import recovery_settings
 STATE=rt.state_root()
 CFG=rt.settings()
 ROLE=os.environ.get('SERIES_CONTROL_ROLE','web')
@@ -395,7 +396,7 @@ def worker():
   requested=load('cleanup-request.json',{}).get('requested',0)
   if not isinstance(requested,(int,float)):requested=0
   now=time.time()
-  if now-last>=1800 or (requested>last and now-last>=120):
+  if now-last>=recovery_settings.current()['cleanup_min']*60 or (requested>last and now-last>=120):
    try:cleanup()
    except Exception as e:save('cleanup-status.json',{'time':time.time(),'state':'Ошибка проверки; удаление прервано','error':type(e).__name__})
    last=time.time()
@@ -509,6 +510,10 @@ class Handler(sec.HardenedHandler):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    if not CFG['public_url']:self.send_error(403);return
    self.send_response(302);self.send_header('Location',CFG['public_url']+'/');self.end_headers();return
+  if self.path=='/api/recovery-settings':
+   session=self.session()
+   if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
+   self.json_output(recovery_settings.current());return
   if self.path=='/api/schedule-settings':
    session=self.session()
    if not session or session['user'] not in sec.CONFIG['owner_ids']:self.send_error(401);return
@@ -575,20 +580,25 @@ class Handler(sec.HardenedHandler):
  def do_POST(self):
   if not self.security_context['secure'] and self.client_address[0] not in ('127.0.0.1','::1'):
    self.send_error(403);return
-  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke','/api/studio-order','/api/watch-settings','/api/schedule-settings'):self.send_error(404);return
+  if self.path not in ('/login','/preference','/myshows-login','/myshows','/check','/logout','/api/action','/api/notifications/settings','/api/notifications/devices','/api/notifications/revoke','/api/studio-order','/api/watch-settings','/api/schedule-settings','/api/recovery-settings'):self.send_error(404);return
   if not self.check_post():return
   try:
    raw=self.rfile.read(int(self.headers['Content-Length']))
-   data=urllib.parse.parse_qs(raw.decode('utf-8'),keep_blank_values=True,strict_parsing=True,max_num_fields=8,errors='strict')
+   data=urllib.parse.parse_qs(raw.decode('utf-8'),keep_blank_values=True,strict_parsing=True,max_num_fields=12,errors='strict')
    if any(len(v)!=1 for v in data.values()):raise ValueError('Duplicate field')
    data={k:v[0] for k,v in data.items()}
    fields={'/api/schedule-settings':{'csrf','sync_minutes','upgrade_time','upgrade_interval_hours'},'/api/watch-settings':{'csrf','confirm_watch','delete_watched'},'/api/studio-order':{'csrf','order'},'/login':{'nonce','username','password'},'/preference':{'csrf','series','studio','mode'},'/myshows-login':{'csrf','username','password'},'/myshows':{'csrf','token'},'/check':{'csrf'},'/logout':{'csrf'},'/api/action':{'csrf','op','episode','selection'},'/api/notifications/settings':{'csrf','enabled','types','show_titles'},'/api/notifications/devices':{'csrf','platform'},'/api/notifications/revoke':{'csrf','deviceId'}}
+   fields['/api/recovery-settings']={'csrf',*recovery_settings.FIELDS}
    if set(data)!=fields[self.path]:raise ValueError('Fields do not match')
    if self.path=='/login':self.login(data);return
    s=self.session()
    if not s or not re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf','')) or not secrets.compare_digest(data.get('csrf',''),s['csrf']):
     logging.warning('Action authentication rejected: session=%s csrf_length=%s csrf_match=%s',bool(s),len(data.get('csrf','')),bool(s) and bool(re.fullmatch(r'[A-Za-z0-9_-]{43}',data.get('csrf',''))) and secrets.compare_digest(data.get('csrf',''),s['csrf']))
     self.send_error(403);return
+   if self.path=='/api/recovery-settings':
+    if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
+    if not sec.consume([('recovery-settings',s['user'],12,300)]):self.send_error(429);return
+    self.json_output(recovery_settings.update({k:int(data[k]) for k in recovery_settings.FIELDS}));return
    if self.path=='/api/schedule-settings':
     if s['user'] not in sec.CONFIG['owner_ids']:self.send_error(403);return
     if not sec.consume([('schedule-settings',s['user'],12,300)]):self.send_error(429);return
