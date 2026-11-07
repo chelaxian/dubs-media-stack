@@ -219,7 +219,41 @@ def result(m,key):
 def report(m,key,state,message,**extra):atomic(m.WORKER_STATE/'jobs'/(key+'.json'),{'state':state,'message':message,'time':time.time(),**extra})
 
 def indexer_api(m,path):
- cfg=rt.connection('prowlarr');r=requests.get(cfg['base_url']+'/api/v1/'+path,headers={'X-Api-Key':cfg['key']},timeout=(5,45));r.raise_for_status();return r.json()
+ cfg=rt.connection('prowlarr')
+ for attempt in range(2):
+  try:
+   r=requests.get(cfg['base_url']+'/api/v1/'+path,headers={'X-Api-Key':cfg['key']},timeout=(5,35))
+   if r.status_code in (502,503,504) and not attempt:time.sleep(1);continue
+   r.raise_for_status();return r.json()
+  except (requests.exceptions.ConnectionError,requests.exceptions.Timeout):
+   if attempt:raise
+   time.sleep(1)
+
+def recheck_disabled_indexer(m):
+ """Bounded Prowlarr health test; successful tests clear its cooldown."""
+ cfg=rt.connection('prowlarr');base=cfg['base_url']+'/api/v1/';headers={'X-Api-Key':cfg['key']}
+ statuses=indexer_api(m,'indexerstatus');path=m.WORKER_STATE/'indexer-health-rechecks.json';history=read(path,{})
+ now=time.time()
+ for status in statuses:
+  idx=status.get('indexerId')
+  if not isinstance(idx,int) or idx<1 or not status.get('disabledTill'):continue
+  prior=history.get(str(idx),{})
+  if now-prior.get('last',0)<prior.get('cooldown',3600):continue
+  # Persist before calling upstream: even a process crash cannot create a
+  # rapid authentication loop on a protected tracker.
+  history[str(idx)]={'last':now,'cooldown':3600,'result':'testing'};atomic(path,history,0o600)
+  try:
+   indexer=indexer_api(m,'indexer/'+str(idx))
+   response=requests.post(base+'indexer/test',headers=headers,json=indexer,timeout=(5,60))
+   if response.status_code==200:history[str(idx)]['result']='ok'
+   else:
+    # Avoid repeated logins if an account or challenge needs human attention.
+    text=response.text[:10000].lower()
+    if any(x in text for x in ('password','credentials','unauthorized','captcha','login failed','invalid login')):history[str(idx)]['cooldown']=43200
+    history[str(idx)]['result']='failed'
+  except (requests.RequestException,ValueError,KeyError):history[str(idx)]['result']='unavailable'
+  atomic(path,history,0o600)
+  return
 def sonarr_search(m,e):
  r=requests.get(m.BASE+'/release',params=({'seriesId':e['seriesId'],'seasonNumber':e['season']} if e.get('seasonSearch') else {'episodeId':e['sonarrId']}),headers=m.HEAD,timeout=(5,45));r.raise_for_status();return r.json()
 
@@ -248,11 +282,12 @@ def title_queries(series,localized):
  return result
 
 def indexer_queries(sources,queries):
- # Launch both useful names on preferred indexers before slower secondary ones.
+ # Visit every source with the primary title before additional aliases. This
+ # prevents a slow source's aliases from occupying the entire first wave.
  def priority(source):
   name=source.get('name','').casefold()
   return next((i for i,marker in enumerate(('rutracker','kinozal','lostfilm','noname','nnm','rutor')) if marker in name),6)
- return [(source,query) for source in sorted(sources,key=priority) for query in queries]
+ return [(source,query) for query in queries for source in sorted(sources,key=priority)]
 
 def series_match(parsed,title,expected,identifiers=None):
  if not expected:return True
@@ -330,8 +365,9 @@ def supports_tv(indexer):
 def waiting_summary(items,errors):
  reasons=list(dict.fromkeys(reason for item in items for reason in item['display'].get('rejections',[])))
  detail='; '.join(reasons[:2]) if reasons else 'раздач нужного сериала и сезона среди ответивших источников не найдено'
+ examples=list(dict.fromkeys(errors))[:4]
  return ('Ожидаем раздачу: найдено '+str(len(items))+' вариантов, подходящих 0. '+detail+
-         ('. Поиск неполный: не получены ответы от части источников ('+str(len(errors))+'); наличие подходящих раздач на них неизвестно' if errors else '')+
+         ('. Поиск неполный: ошибок или незавершённых запросов '+str(len(errors))+'; '+ '; '.join(examples)+'; наличие подходящих раздач на затронутых источниках неизвестно' if errors else '')+
          '. Повторная проверка через 15 минут; в Transmission ничего не передано')
 
 def transfer_message(t):
@@ -345,7 +381,7 @@ def transfer_message(t):
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
  series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];series['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
- started=time.time();deadline=started+65;sources=[]
+ started=time.time();deadline=started+120;sources=[]
  try:sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
  except Exception:pass
  pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
@@ -368,26 +404,30 @@ def search(m,key,e,on_progress=None):
   elif req.get('op')=='download':check_cancelled(m,key,e['id'])
   elapsed=time.time()-started;estimate=max(0,elapsed/max(1,completed)*(total-completed)) if completed else None
   atomic(m.WORKER_STATE/'release-cache'/(key+'.json'),{'episode':e,'created':time.time(),'items':private},0o600)
-  report(m,progress_key,'running','Поиск: ответили '+str(completed)+' из '+str(total)+' источников · найдено '+str(len(public))+', подходят '+str(sum(bool(x.get('allowed')) for x in public)),rows=public,warnings=errors,episode=e,search={'completed':completed,'total':total,'elapsed':round(elapsed),'eta':round(estimate) if estimate is not None else None,'active':[v[1] for v in tasks.values()][:6]})
+  report(m,progress_key,'running','Поиск: завершено '+str(completed)+' из '+str(total)+' запросов · найдено '+str(len(public))+', подходят '+str(sum(bool(x.get('allowed')) for x in public)),rows=public,warnings=errors,episode=e,search={'completed':completed,'total':total,'elapsed':round(elapsed),'eta':round(estimate) if estimate is not None else None,'active':[v[1] for v in tasks.values()][:6]})
   for child,eid in e.get('batchJobs',[]):
    if child==progress_key:continue
    try:check_cancelled(m,child,eid)
    except UserError:continue
-   report(m,child,'running','Общий поиск раздачи сезона: ответили '+str(completed)+' из '+str(total)+' источников')
+   report(m,child,'running','Общий поиск раздачи сезона: завершено '+str(completed)+' из '+str(total)+' запросов')
   if on_progress:on_progress(public,errors,{'completed':completed,'total':total,'eta':round(estimate) if estimate is not None else None})
   last_publish=time.time()
  try:
   publish()
   while tasks:
    if time.time()>=deadline:
-    errors.append('Лимит поиска 65 секунд: не дождались '+str(len(tasks))+' ответов; используем полученные результаты');break
+    for _,name in tasks.values():errors.append('Источник '+name+': запрос не завершился за 120 секунд')
+    break
    done,_=concurrent.futures.wait(tasks,timeout=1,return_when=concurrent.futures.FIRST_COMPLETED)
    if not done:
     publish();continue
    for future in done:
     source,name=tasks.pop(future);completed+=1
     try:raw=future.result()
-    except Exception:errors.append('Источник '+name+' не ответил');publish();continue
+    except Exception as exc:
+     status=getattr(getattr(exc,'response',None),'status_code',None)
+     detail=('ошибка HTTP '+str(status)) if status else ('тайм-аут' if isinstance(exc,requests.exceptions.Timeout) else 'ошибка соединения')
+     errors.append('Источник '+name+': '+detail);publish();continue
     for row in raw[:700]:
      if len(private)>=700 or time.time()>=deadline:break
      hints=season_hints(row.get('title',''))
@@ -979,11 +1019,13 @@ def run(m):
  for path in (m.STATE/'requests').glob('*.json'):
   status=m.WORKER_STATE/'jobs'/path.name
   if read(status,{}).get('state') in ('queued','running'):status.unlink(missing_ok=True)
- active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0;last_merge=time.time();merge_pool=concurrent.futures.ThreadPoolExecutor(max_workers=1);merge_future=None
+ active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0;last_indexer_check=0;last_merge=time.time();merge_pool=concurrent.futures.ThreadPoolExecutor(max_workers=1);merge_future=None
  while True:
   now=time.time()
   if now-last_order>=30:
    studio_order.reconcile(m);last_order=now
+  if now-last_indexer_check>=300 and 'indexer-health' not in active and len(set(active.values()))<2:
+   active['indexer-health']=POOL.submit(recheck_disabled_indexer,m);last_indexer_check=now
   for key,future in list(active.items()):
    if future.done():
     try:future.result()
