@@ -1445,7 +1445,7 @@ async function watchApproval(label) {
           const session = await json("/api/session");
           const saved = await json("/api/watch-settings", {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:new URLSearchParams({csrf:session.csrf, confirm_watch:policy.confirm_watch ? "1":"0", delete_watched:policy.delete_watched ? "1":"0"})});
           confirm.setAttribute("aria-checked", String(saved.confirm_watch)); remove.setAttribute("aria-checked", String(saved.delete_watched));
-          if ($("cleanup-mode")) $("cleanup-mode").textContent = saved.delete_watched ? "КАЖДЫЕ 30 МИН" : "ОТКЛЮЧЕНО";
+          if ($("cleanup-mode")) $("cleanup-mode").textContent = saved.delete_watched ? "ВКЛЮЧЕНО" : "ОТКЛЮЧЕНО";
           if ($("cleanup-description")) $("cleanup-description").textContent = saved.delete_watched ? "Просмотренные в MyShows серии автоматически удаляются из медиатеки и проверенных исходных загрузок. Мониторинг отключается, чтобы они не скачались снова." : "Автоочистка отключена: просмотренные файлы сохраняются в медиатеке и исходных загрузках.";
           status.textContent = saved.delete_watched ? "Сохранено. Удаление просмотренных включено" : "Сохранено. Просмотренные файлы сохраняются";
         } catch (error) { status.textContent = error.message; }
@@ -1468,6 +1468,19 @@ async function watchApproval(label) {
  });
 }
 // Native bridges add these trusted-origin shortcuts after page load.
+{
+ const form=$("recovery-settings-form");
+ if(form)form.addEventListener("submit",async ev=>{
+  ev.preventDefault();const button=form.querySelector('button');button.disabled=true;$("recovery-status").textContent="Сохраняем…";
+  try{
+   const session=await json('/api/session');const body=new URLSearchParams(new FormData(form));body.set('csrf',session.csrf);
+   const saved=await json('/api/recovery-settings',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+   for(const [key,value] of Object.entries(saved)){const field=form.elements.namedItem(key);if(field)field.value=value;}
+   if ($("cleanup-mode") && $("cleanup-mode").textContent !== "ОТКЛЮЧЕНО") $("cleanup-mode").textContent="КАЖДЫЕ "+saved.cleanup_min+" МИН";
+   $("recovery-status").textContent="Сохранено. Применяется без перезапуска";
+  }catch(error){$("recovery-status").textContent=error.message;}finally{button.disabled=false;}
+ });
+}
 // Keep them together in Settings instead of scattering client controls.
 {
  const settings=$("settings");
