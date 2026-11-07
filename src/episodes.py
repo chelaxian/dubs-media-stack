@@ -328,10 +328,18 @@ def supports_tv(indexer):
 
 def waiting_summary(items,errors):
  reasons=list(dict.fromkeys(reason for item in items for reason in item['display'].get('rejections',[])))
- detail='; '.join(reasons[:2]) if reasons else 'раздач нужного сериала и сезона не найдено'
+ detail='; '.join(reasons[:2]) if reasons else 'раздач нужного сериала и сезона среди ответивших источников не найдено'
  return ('Ожидаем раздачу: найдено '+str(len(items))+' вариантов, подходящих 0. '+detail+
-         ('. Не получены ответы от части источников ('+str(len(errors))+')' if errors else '')+
+         ('. Поиск неполный: не получены ответы от части источников ('+str(len(errors))+'); наличие подходящих раздач на них неизвестно' if errors else '')+
          '. Повторная проверка через 15 минут; в Transmission ничего не передано')
+
+def transfer_message(t):
+ if t.get('status')==0:return 'Загрузка на паузе в Transmission; автоматическое возобновление не подтверждено'
+ if t.get('status') in (1,2):return 'Transmission проверяет файлы перед загрузкой'
+ if t.get('status')==3:return 'Загрузка ожидает свободного места в очереди Transmission'
+ if t.get('rateDownload',0)>0:return 'Загрузка серии'
+ peers=t.get('peersConnected',0);sending=t.get('peersSendingToUs',0)
+ return ('Раздача найдена и запущена, но передачи данных пока нет: подключено пиров '+str(peers)+', передают '+str(sending)+'. Ожидаем доступных пиров или ответа трекера')
 
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
@@ -847,7 +855,7 @@ def monitor(m):
  with DOWNLOAD_LOCK:
   managed=read(m.WORKER_STATE/'managed-downloads.json',{})
   if not managed:return
-  torrents=m.trpc('torrent-get',{'fields':['id','hashString','files','fileStats','downloadDir','error','errorString','rateDownload','eta','status']})['torrents'];lookup={x['hashString'].lower():x for x in torrents}
+  torrents=m.trpc('torrent-get',{'fields':['id','hashString','files','fileStats','downloadDir','error','errorString','rateDownload','eta','status','peersConnected','peersSendingToUs']})['torrents'];lookup={x['hashString'].lower():x for x in torrents}
   changed=False
   for h,entry in managed.items():
    t=lookup.get(h)
@@ -896,7 +904,7 @@ def monitor(m):
     total=sum(t['files'][i]['length'] for i in requested['wanted']);completed=sum(t['fileStats'][i]['bytesCompleted'] for i in requested['wanted'])
     if completed<total:
      speed=t.get('rateDownload',0);eta=round((total-completed)/speed) if speed>0 else None
-     report(m,key,'downloading','Загрузка серии' if speed else 'Ожидаем пиров / загрузка приостановлена',percent=round(100*completed/max(1,total),1),rate=speed,eta=eta,downloaded=completed,total=total)
+     report(m,key,'paused' if t.get('status')==0 else 'downloading',transfer_message(t),percent=round(100*completed/max(1,total),1),rate=speed,eta=eta,downloaded=completed,total=total)
      # The deferred "download started" fires only on OBSERVED transfer
      # progress (bytes>0 or rate>0) for this episode's selected files —
      # queue acceptance alone never announces.
