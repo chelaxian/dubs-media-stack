@@ -11,10 +11,11 @@ class SearchFixes(unittest.TestCase):
  def test_original_localized_and_alternate_queries_are_bounded(self):
   s={'title':'ONE PIECE (2023)','alternateTitles':[{'title':'One Piece'},{'title':'ワンピース'}]}
   self.assertEqual(episodes.title_queries(s,'Ван-Пис'),['ONE PIECE','Ван-Пис','ワンピース'])
- def test_preferred_trackers_receive_both_titles_first(self):
+ def test_primary_title_reaches_all_sources_before_aliases(self):
   sources=[{'name':'AniDUB'}, {'name':'Kinozal'}, {'name':'RuTracker.org'}, {'name':'RuTor'}]
   tasks=episodes.indexer_queries(sources,['One Piece','Ван-Пис'])
-  self.assertEqual([(s['name'],q) for s,q in tasks[:4]],[('RuTracker.org','One Piece'),('RuTracker.org','Ван-Пис'),('Kinozal','One Piece'),('Kinozal','Ван-Пис')])
+  self.assertEqual([(s['name'],q) for s,q in tasks[:4]],[('RuTracker.org','One Piece'),('Kinozal','One Piece'),('RuTor','One Piece'),('AniDUB','One Piece')])
+  self.assertEqual(tasks[4][1],'Ван-Пис')
  def test_later_season_dual_title_and_remake_protection(self):
   expected={'id':6,'title':'ONE PIECE (2023)','year':2023,'_airYear':'2026','_myshowsTitle':'Ван-Пис','alternateTitles':[{'title':'One Piece'}]}
   candidate='One Piece Большой куш (Ван-Пис) One Piece'
@@ -43,6 +44,20 @@ class SearchFixes(unittest.TestCase):
   self.assertFalse(episodes.supports_tv({'capabilities':{'categories':[{'id':6000}]}}));self.assertTrue(episodes.supports_tv({'capabilities':{'categories':[{'id':5000}]}}))
   text=episodes.waiting_summary([{'display':{'rejections':['Русский язык не подтверждён']}}],['offline'])
   self.assertIn('подходящих 0',text);self.assertIn('Русский язык',text);self.assertIn('Transmission ничего не передано',text)
+ def test_disabled_indexer_recheck_is_rate_limited_and_auth_failure_backs_off(self):
+  import tempfile
+  from pathlib import Path
+  from unittest.mock import patch
+  with tempfile.TemporaryDirectory() as d:
+   m=types.SimpleNamespace(WORKER_STATE=Path(d))
+   def api(_m,path):return [{'indexerId':22,'disabledTill':'later'}] if path=='indexerstatus' else {'id':22}
+   response=Mock(status_code=400,text='invalid credentials')
+   with patch.object(episodes.rt,'connection',return_value={'base_url':'http://localhost','key':'secret'}),patch.object(episodes,'indexer_api',side_effect=api),patch.object(episodes.requests,'post',return_value=response) as post:
+    episodes.recheck_disabled_indexer(m);episodes.recheck_disabled_indexer(m)
+   self.assertEqual(post.call_count,1)
+   state=episodes.read(Path(d)/'indexer-health-rechecks.json',{})['22']
+   self.assertEqual(state['cooldown'],43200);self.assertEqual(state['result'],'failed')
+   self.assertNotIn('secret',str(state))
  def test_russian_audio_title_markers(self):
   import re
   sys.path.insert(0,str(_dubs_env.INSTALLER))
