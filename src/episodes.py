@@ -11,6 +11,7 @@ import schedule_settings
 import notifications
 import tracker_merge
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
+STALL_OBSERVATIONS={}
 VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ssa','.sub','.vtt','.mka','.ac3','.aac'}
 class UserError(Exception):pass
 
@@ -860,22 +861,52 @@ def monitor(m):
   for h,entry in managed.items():
    t=lookup.get(h)
    if not t:continue
-   # Only an unconfirmed panel start is recoverable; after Transmission has
-   # started the torrent, a later user pause must never be overridden.
+   if entry.get('startFailed'):
+    if not entry.get('startFailedAt'):entry['startFailedAt']=time.time();changed=True
+    elif time.time()-entry['startFailedAt']>=3600:
+     entry.pop('startFailed',None);entry.pop('startFailedAt',None);entry['pausedSince']=time.time();changed=True
+   # A panel order remains active until it is explicitly cancelled. Recover
+   # an unexpected stop only for its exact file selection, never an unrelated
+   # torrent or a modified selection. Persist intent before attempting RPC.
+   active=any(x.get('state')=='downloading' for x in entry.get('episodes',[]))
+   # Reannounce only a selected, active download after 15 minutes without
+   # any file progress; never restart or replace a healthy transfer.
+   if active and t.get('status')==4 and not t.get('error'):
+    indexes=entry.get('wanted',[]);stats=t.get('fileStats',[])
+    if indexes and all(isinstance(i,int) and 0<=i<len(stats) and stats[i].get('wanted') for i in indexes):
+     progress=sum(stats[i].get('bytesCompleted',0) for i in indexes);now=time.time();obs=STALL_OBSERVATIONS.get(h)
+     if not obs or obs['progress']!=progress or t.get('rateDownload',0)>0:STALL_OBSERVATIONS[h]={'progress':progress,'since':now}
+     elif now-obs['since']>=900:
+      m.trpc('torrent-reannounce',{'ids':[h]});obs['since']=now
+   else:STALL_OBSERVATIONS.pop(h,None)
+   if t.get('status')==0 and active and not entry.get('startPending') and not entry.get('startFailed'):
+    if not entry.get('pausedSince'):
+     entry['pausedSince']=time.time();changed=True
+    elif time.time()-entry['pausedSince']>=120:
+     expected=set(entry.get('wanted',[]))
+     actual={i for i,s in enumerate(t.get('fileStats',[])) if s.get('wanted')}
+     ready,_=rt.storage_ready()
+     if ready and not t.get('error') and expected and actual==expected:
+      entry['startPending']=time.time()-60;entry['startAttempts']=0;changed=True
+      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+   elif t.get('status')!=0 and entry.pop('pausedSince',None):changed=True
+   # Persisted start intent also survives a worker or host restart.
    if entry.get('startPending'):
     if t.get('status') in (3,4,5,6):
      entry.pop('startPending',None);entry.pop('startAttempts',None);changed=True
     elif (t.get('status')==0 and time.time()-entry['startPending']>=60 and not t.get('error') and entry.get('wanted') and any(x.get('state')=='downloading' for x in entry.get('episodes',[]))):
      attempts=entry.get('startAttempts',0)
      if attempts<3:
-      m.trpc('torrent-start',{'ids':[h]});entry['startPending']=time.time();entry['startAttempts']=attempts+1;changed=True
+      entry['startPending']=time.time();entry['startAttempts']=attempts+1;changed=True
+      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+      m.trpc('torrent-start',{'ids':[h]})
      else:
-      entry.pop('startPending',None);entry.pop('startAttempts',None);entry['startFailed']=True;changed=True
+      entry.pop('startPending',None);entry.pop('startAttempts',None);entry['startFailed']=True;entry['startFailedAt']=time.time();changed=True
    if entry.get('startFailed'):
-    if t.get('status') in (3,4,5,6):entry.pop('startFailed',None);changed=True
+    if t.get('status') in (3,4,5,6):entry.pop('startFailed',None);entry.pop('startFailedAt',None);changed=True
     else:
      for requested in entry.get('episodes',[]):
-      if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток')
+      if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток; повторим через час')
      continue
    for requested in entry['episodes']:
     if requested['state'] in ('done','cancelled'):continue
