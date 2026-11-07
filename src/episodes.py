@@ -1,5 +1,5 @@
 """MyShows episode views and bounded, owner-only episode operations."""
-import base64,concurrent.futures,datetime,hashlib,ipaddress,json,logging,os,re,secrets,subprocess,tempfile,threading,time,urllib.parse
+import base64,concurrent.futures,datetime,hashlib,ipaddress,json,logging,os,re,secrets,subprocess,tempfile,threading,time,urllib.parse,xml.etree.ElementTree as ET
 from pathlib import Path
 import requests
 import sys
@@ -12,6 +12,7 @@ import recovery_settings
 import notifications
 import tracker_merge
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
+INDEXER_SLOTS=threading.BoundedSemaphore(8)
 STALL_OBSERVATIONS={}
 VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ssa','.sub','.vtt','.mka','.ac3','.aac'}
 class UserError(Exception):pass
@@ -223,12 +224,56 @@ def indexer_api(m,path):
  cfg=rt.connection('prowlarr')
  for attempt in range(2):
   try:
-   r=requests.get(cfg['base_url']+'/api/v1/'+path,headers={'X-Api-Key':cfg['key']},timeout=(5,35))
+   r=requests.get(cfg['base_url']+'/api/v1/'+path,headers={'X-Api-Key':cfg['key']},timeout=(5,45) if path.startswith('search?') else (5,35))
    if r.status_code in (502,503,504) and not attempt:time.sleep(1);continue
    r.raise_for_status();return r.json()
   except (requests.exceptions.ConnectionError,requests.exceptions.Timeout):
    if attempt:raise
    time.sleep(1)
+
+def limited_indexer_search(m,path,deadline):
+ remaining=max(0,deadline-time.time())
+ if not INDEXER_SLOTS.acquire(timeout=remaining):raise requests.exceptions.Timeout('Search queue deadline reached')
+ try:
+  if time.time()>=deadline:raise requests.exceptions.Timeout('Search queue deadline reached')
+  return indexer_api(m,path)
+ finally:INDEXER_SLOTS.release()
+
+def jackett_source(indexer):
+ """Return a validated local Jackett route, or None for normal Prowlarr."""
+ try:
+  fields={x.get('name'):x.get('value') for x in indexer.get('fields',[])}
+  configured=urllib.parse.urlsplit(fields.get('baseUrl') or '')
+  match=re.fullmatch(r'/api/v2\.0/indexers/([a-zA-Z0-9_-]+)/results/torznab/?',configured.path)
+  if not match:return None
+  cfg=rt.connection('jackett');base=urllib.parse.urlsplit(cfg['base_url'])
+  if base.scheme!='http' or base.hostname not in ('127.0.0.1','localhost') or base.username or base.password or base.path not in ('','/') or not cfg.get('key'):return None
+  return cfg,match.group(1)
+ except (OSError,ValueError,KeyError):return None
+
+def jackett_search(m,indexer,query,route,deadline):
+ cfg,slug=route;url=cfg['base_url']+'/api/v2.0/indexers/'+slug+'/results/torznab/api'
+ validate_endpoint(url)
+ remaining=max(0,deadline-time.time())
+ if not INDEXER_SLOTS.acquire(timeout=remaining):raise requests.exceptions.Timeout('Search queue deadline reached')
+ try:
+  if time.time()>=deadline:raise requests.exceptions.Timeout('Search queue deadline reached')
+  r=requests.get(url,params={'t':'search','q':query,'apikey':cfg['key']},timeout=(5,35),allow_redirects=False);r.raise_for_status()
+  if r.status_code!=200:raise ValueError('Unexpected indexer response')
+  if len(r.content)>12*1024*1024:raise ValueError('Indexer response too large')
+  root=ET.fromstring(r.content)
+  if root.tag=='error' or root.find('.//error') is not None:raise ValueError('Indexer error')
+  rows=[]
+  for item in root.findall('.//item')[:700]:
+   attrs={x.get('name'):x.get('value') for x in item if x.tag.endswith('}attr')}
+   enclosure=item.find('enclosure');url=(enclosure.get('url') if enclosure is not None else None) or item.findtext('link') or ''
+   def number(value):
+    try:return max(0,int(value))
+    except (ValueError,TypeError):return 0
+   seed=number(attrs.get('seeders'));peers=number(attrs.get('peers'))
+   rows.append({'title':item.findtext('title') or '', 'guid':item.findtext('guid') or '', 'indexerId':indexer['id'], 'indexer':indexer.get('name','Jackett'), 'downloadUrl':url, 'size':number(item.findtext('size')), 'seeders':seed, 'leechers':max(0,peers-seed), 'publishDate':item.findtext('pubDate')})
+  return rows
+ finally:INDEXER_SLOTS.release()
 
 def recheck_disabled_indexer(m):
  """Bounded Prowlarr health test; successful tests clear its cooldown."""
@@ -364,6 +409,26 @@ def supports_tv(indexer):
   return any(5000<=x.get('id',0)<6000 or walk(x.get('subCategories',[])) for x in items)
  return walk(categories)
 
+def disabled_indexer_ids(statuses,now):
+ return {x['indexerId'] for x in statuses if (utcdate(x.get('disabledTill')) or 0)>now and isinstance(x.get('indexerId'),int)}
+
+def sonarr_sources_covered(m,sources):
+ """Skip the Sonarr search only if every active Sonarr source is in Prowlarr."""
+ try:
+  all_sources=m.api('indexer')
+  if not isinstance(all_sources,list):return False
+  active=[x for x in all_sources if x.get('enableInteractiveSearch')]
+  if not active:return False
+  known={int(x['id']) for x in sources}
+  for x in active:
+   if not x.get('name','').endswith(' (Prowlarr)'):return False
+   fields={f.get('name'):f.get('value') for f in x.get('fields',[])}
+   url=urllib.parse.urlsplit(fields.get('baseUrl') or '')
+   match=re.fullmatch(r'/([0-9]+)/?',url.path)
+   if url.scheme not in ('http','https') or not match or int(match.group(1)) not in known:return False
+  return True
+ except (ValueError,TypeError,KeyError,requests.RequestException):return False
+
 def waiting_summary(items,errors):
  reasons=list(dict.fromkeys(reason for item in items for reason in item['display'].get('rejections',[])))
  detail='; '.join(reasons[:2]) if reasons else 'раздач нужного сериала и сезона среди ответивших источников не найдено'
@@ -383,15 +448,24 @@ def transfer_message(t):
 def search(m,key,e,on_progress=None):
  if not e.get('sonarrId'):raise UserError('Нумерация MyShows и Sonarr не сопоставлена однозначно')
  series=m.api('series/'+str(e['seriesId']));series['_myshowsTitle']=e['seriesTitle'];series['_airYear']=(e.get('airDate') or '')[:4];profile=m.api('qualityprofile/'+str(series['qualityProfileId']));errors=[];seen=set();private=[];public=[]
- started=time.time();search_seconds=recovery_settings.current()['search_deadline_sec'];deadline=started+search_seconds;sources=[]
- try:sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
+ started=time.time();search_seconds=recovery_settings.current()['search_deadline_sec'];deadline=started+search_seconds;sources=[];disabled=set()
+ try:
+  sources=[x for x in indexer_api(m,'indexer') if x.get('enable',True) and supports_tv(x)][:40]
+  disabled=disabled_indexer_ids(indexer_api(m,'indexerstatus'),time.time())
  except Exception:pass
  pool=concurrent.futures.ThreadPoolExecutor(max_workers=16)
- tasks={pool.submit(sonarr_search,m,e):('sonarr','Sonarr')}
+ tasks={}
+ if not sources or not sonarr_sources_covered(m,sources):tasks[pool.submit(sonarr_search,m,e)]=('sonarr','Sonarr')
  if sources:
+  for indexer in sources:
+   if indexer.get('id') in disabled:errors.append('Источник '+str(indexer.get('name','Трекер'))[:100]+': временно исключён Prowlarr после ошибок')
   for indexer,query in indexer_queries(sources,title_queries(series,e['seriesTitle'])):
-   tasks[pool.submit(indexer_api,m,'search?type=search&indexerIds='+str(int(indexer['id']))+'&query='+urllib.parse.quote(query))]=('prowlarr',str(indexer.get('name','Трекер'))[:100])
- else:tasks[pool.submit(indexer_api,m,'search?type=search&query='+urllib.parse.quote(series['title']))]=('prowlarr','Prowlarr')
+   if indexer.get('id') in disabled:continue
+   route=jackett_source(indexer)
+   if route:future=pool.submit(jackett_search,m,indexer,query,route,deadline)
+   else:future=pool.submit(limited_indexer_search,m,'search?type=search&indexerIds='+str(int(indexer['id']))+'&query='+urllib.parse.quote(query),deadline)
+   tasks[future]=('prowlarr',str(indexer.get('name','Трекер'))[:100])
+ else:tasks[pool.submit(limited_indexer_search,m,'search?type=search&query='+urllib.parse.quote(series['title']),deadline)]=('prowlarr','Prowlarr')
  total=len(tasks);completed=0;last_publish=0
  def publish():
   nonlocal last_publish
@@ -418,7 +492,8 @@ def search(m,key,e,on_progress=None):
   publish()
   while tasks:
    if time.time()>=deadline:
-    for _,name in tasks.values():errors.append('Источник '+name+': запрос не завершился за '+str(search_seconds)+' секунд')
+    for future,(_,name) in tasks.items():
+     errors.append('Источник '+name+(': запрос ещё ожидал очереди' if not future.running() and not future.done() else ': запрос не обработан за '+str(search_seconds)+' секунд'))
     break
    done,_=concurrent.futures.wait(tasks,timeout=1,return_when=concurrent.futures.FIRST_COMPLETED)
    if not done:
@@ -428,7 +503,7 @@ def search(m,key,e,on_progress=None):
     try:raw=future.result()
     except Exception as exc:
      status=getattr(getattr(exc,'response',None),'status_code',None)
-     detail=('ошибка HTTP '+str(status)) if status else ('тайм-аут' if isinstance(exc,requests.exceptions.Timeout) else 'ошибка соединения')
+     detail=('ошибка HTTP '+str(status)) if status else ('тайм-аут' if isinstance(exc,requests.exceptions.Timeout) else ('некорректный ответ индексатора' if isinstance(exc,(ET.ParseError,ValueError)) else 'ошибка соединения'))
      errors.append('Источник '+name+': '+detail);publish();continue
     for row in raw[:700]:
      if len(private)>=700 or time.time()>=deadline:break
