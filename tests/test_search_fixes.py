@@ -3,6 +3,29 @@ from unittest.mock import Mock
 import _dubs_env  # offline roots; src/automations on sys.path
 import episodes
 class SearchFixes(unittest.TestCase):
+ def test_only_unexpired_indexer_cooldowns_block_direct_search(self):
+  statuses=[{'indexerId':1,'disabledTill':'2030-01-01T00:00:00Z'},{'indexerId':2,'disabledTill':'2020-01-01T00:00:00Z'}]
+  self.assertEqual(episodes.disabled_indexer_ids(statuses,episodes.utcdate('2026-01-01T00:00:00Z')),{1})
+ def test_jackett_route_is_local_and_converts_torznab(self):
+  import time
+  from unittest.mock import patch
+  indexer={'id':27,'name':'Tracker (Jackett)','fields':[{'name':'baseUrl','value':'http://host:9117/api/v2.0/indexers/rutracker/results/torznab'}]}
+  cfg={'base_url':'http://127.0.0.1:9117','key':'private-key'}
+  xml=b'<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><item><title>Example</title><guid>x</guid><size>123</size><enclosure url="http://127.0.0.1:9117/get"/><torznab:attr name="seeders" value="4"/><torznab:attr name="peers" value="7"/></item></channel></rss>'
+  response=Mock(content=xml,status_code=200);response.raise_for_status.return_value=None
+  with patch.object(episodes.rt,'connection',return_value=cfg),patch.object(episodes,'validate_endpoint'),patch.object(episodes.requests,'get',return_value=response):
+   route=episodes.jackett_source(indexer);rows=episodes.jackett_search(None,indexer,'test',route,time.time()+10)
+  self.assertEqual((rows[0]['seeders'],rows[0]['leechers'],rows[0]['indexerId']),(4,3,27))
+  with patch.object(episodes.rt,'connection',return_value={'base_url':'http://evil.example','key':'x'}):self.assertIsNone(episodes.jackett_source(indexer))
+ def test_sonarr_search_skipped_only_if_all_sources_are_in_prowlarr(self):
+  def source(name,path,enabled=True):return {'name':name,'enableInteractiveSearch':enabled,'fields':[{'name':'baseUrl','value':'http://localhost:9696/'+path+'/'}]}
+  m=types.SimpleNamespace(api=Mock(return_value=[source('RuTracker (Prowlarr)','27')]))
+  self.assertTrue(episodes.sonarr_sources_covered(m,[{'id':27}]))
+  self.assertFalse(episodes.sonarr_sources_covered(m,[{'id':29}]))
+  m.api.return_value.append(source('Independent','27'))
+  self.assertFalse(episodes.sonarr_sources_covered(m,[{'id':27}]))
+  m.api.return_value[-1]['enableInteractiveSearch']=False
+  self.assertTrue(episodes.sonarr_sources_covered(m,[{'id':27}]))
  def test_bilingual_exact_known_aliases(self):
   expected={'id':36,'title':"Georgie & Mandy's First Marriage",'_myshowsTitle':'Первый брак Джорджи и Мэнди','alternateTitles':[{'title':'Georgie and Mandys First Marriage'}]}
   for title in ["Первый брак Джорджи и Мэнди / Georgie and Mandy's First Marriage", "Первый брак Джорджи и Мэнди  Georgie and Mandy's First Marriage"]:
