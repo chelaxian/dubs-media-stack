@@ -58,7 +58,7 @@ def render(m,csrf):
  editor+='</ol><button type="submit" id="studio-order-save" class="quiet">Сохранить порядок</button><p id="studio-order-status" role="status" aria-live="polite" data-state="'+e(order['state'])+'">'+e(order['message'])+'</p></form>'
  editor='<div class="panel" id="studio-order-panel">'+editor+'</div>'
  recovery=recovery_settings.current()
- recovery_fields=[('search_retry_min','Повторный поиск раздач · минут'),('search_deadline_sec','Максимум на поиск · секунд'),('pause_grace_min','Запуск после паузы · минут'),('stall_min','Повторный запрос пиров · минут'),('start_backoff_min','Повтор после ошибок запуска · минут'),('indexer_recheck_min','Повторный тест индексатора · минут'),('cleanup_min','Очистка просмотренного · минут'),('start_retry_sec','Интервал попыток запуска · секунд'),('start_attempts','Число попыток запуска')]
+ recovery_fields=[('search_retry_min','Повторный поиск раздач · минут'),('search_deadline_sec','Максимум на поиск · секунд'),('pause_grace_min','Запуск после паузы · минут'),('stall_min','Повторный запрос пиров · минут'),('start_backoff_min','Повтор после ошибок запуска · минут'),('indexer_recheck_min','Повторный тест индексатора · минут'),('cleanup_min','Очистка просмотренного · минут'),('verify_retry_min','Проверка целостности · минут'),('start_retry_sec','Интервал попыток запуска · секунд'),('start_attempts','Число попыток запуска')]
  recovery_panel='<div class="panel" id="recovery-panel"><h3>Самовосстановление</h3><form id="recovery-settings-form" class="schedule-form">'
  for key,label in recovery_fields:
   _,low,high=recovery_settings.FIELDS[key]
