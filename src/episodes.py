@@ -753,6 +753,46 @@ def preserve_replaced_file(m,current,e):
  except (OSError,ValueError) as exc:
   logging.warning('Replacement backup failed: %s',type(exc).__name__)
   raise UserError('Не удалось сохранить исходный файл перед заменой; импорт остановлен')
+ return str(Path(mp['torrent_host'])/'.dubs-replacement-backups'/tmp)
+
+def replacement_sources(m,e,current):
+ """Remember only a source verified against the old single-episode library file."""
+ try:
+  fid=e['_upgradeFileId']
+  group=[x for x in m.api('episode?seriesId='+str(e['seriesId'])) if x.get('episodeFileId')==fid]
+  if len(group)!=1 or group[0]['id']!=e['sonarrId']:return []
+  media=current.get('episodeFile') or m.api('episodefile/'+str(fid))
+  mp=rt.media_paths();prefix=mp['sonarr_tv'].rstrip('/')+'/'
+  if not media['path'].startswith(prefix):return []
+  library=m.safe_path(mp['shows_host']+'/'+media['path'].removeprefix(prefix),mp['shows_host'])
+  source=m.source_copy(e['seriesId'],fid,library)
+  return [{'path':str(source),'fingerprint':m.fingerprint(source),'source':True}] if source else []
+ except Exception as exc:
+  logging.warning('Could not verify obsolete source: %s',type(exc).__name__);return []
+
+def remove_replaced_sources(m,e,requested,actual):
+ """Discard verified old copies only after a different library file is present."""
+ pending=requested.get('replacementCopies',[])
+ if not pending:return
+ try:
+  if not actual.get('hasFile') or actual.get('episodeFileId') in (None,e.get('_upgradeFileId')):return
+  media=actual.get('episodeFile') or m.api('episodefile/'+str(actual['episodeFileId']))
+  mp=rt.media_paths();prefix=mp['sonarr_tv'].rstrip('/')+'/'
+  if not media['path'].startswith(prefix):return
+  current=m.safe_path(mp['shows_host']+'/'+media['path'].removeprefix(prefix),mp['shows_host'])
+  if m.fingerprint(current)[2]!=media['size'] or media['size']<=0:return
+  remaining=[]
+  for item in pending:
+   try:
+    path=m.safe_path(item['path'],mp['torrent_host'])
+    if m.fingerprint(path)!=item['fingerprint']:raise ValueError('Obsolete file changed')
+    if m.fingerprint(path)[:2]==m.fingerprint(current)[:2]:raise ValueError('Replacement shares the old inode')
+    if item.get('source'):m.disable_source(path)
+    m.unlink_media(path,item['fingerprint'])
+   except Exception as exc:
+    logging.warning('Obsolete copy cleanup deferred: %s',type(exc).__name__);remaining.append(item)
+  requested['replacementCopies']=remaining
+ except Exception as exc:logging.warning('Replacement verification deferred: %s',type(exc).__name__)
 
 def request_download(m,key,e,item,metainfo=None,start=True):
  row=item['row'];display=item['display']
@@ -1048,6 +1088,8 @@ def monitor(m):
       if requested.get('state')=='downloading':report(m,requested['job'],'paused','Transmission не подтвердил запуск после повторных попыток; повторим через '+str(recovery_settings.current()['start_backoff_min'])+' мин')
      continue
    for requested in entry['episodes']:
+    if requested['state']=='done' and requested.get('replacementCopies'):
+     remove_replaced_sources(m,requested['episode'],requested,m.api('episode/'+str(requested['episode']['sonarrId'])));changed=True
     if requested['state'] in ('done','cancelled'):continue
     e=requested['episode'];key=requested['job']
     if t.get('error'):report(m,key,'paused','Transmission сообщил ошибку загрузки; данные не удалены');continue
@@ -1056,6 +1098,7 @@ def monitor(m):
      # Sonarr can fail in its tracked-download post-processing after a successful copy.
      # The episode's registered file is authoritative, not the command's final status.
      if actual.get('hasFile') and actual.get('episodeFileId') and actual.get('episodeFileId')!=e.get('_upgradeFileId') and (actual.get('episodeFile') or {}).get('size',0)>0:
+      remove_replaced_sources(m,e,requested,actual)
       requested['state']='done';requested['importedFileId']=actual['episodeFileId'];changed=True;report(m,key,'done','Серия скачана и добавлена в медиатеку',percent=100)
       notifications.emit_episode('library_ready',e,key)
       # The previous localMedia facts (possibly of a replaced file) must not
@@ -1104,8 +1147,10 @@ def monitor(m):
     if not resource:report(m,key,'error','Файл скачан, но Sonarr не распознал его для импорта');continue
     if e.get('_manualReplace') and not requested.get('backupMade'):
      try:
-      preserve_replaced_file(m,actual,e);requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+      backup=preserve_replaced_file(m,actual,e);requested.setdefault('replacementCopies',[]).append({'path':backup,'fingerprint':m.fingerprint(backup),'source':False});requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
      except UserError as exc:report(m,key,'error',str(exc));continue
+    if e.get('_upgradeFileId') and not requested.get('replacementSourcesChecked'):
+     requested.setdefault('replacementCopies',[]).extend(replacement_sources(m,e,actual));requested['replacementSourcesChecked']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
     imported={'path':path,'seriesId':e['seriesId'],'episodeIds':[e['sonarrId']],'quality':requested['quality'] if e.get('_upgradeFileId') else resource.get('quality') or requested['quality'],'languages':resource.get('languages') or ([] if e.get('_manualSelection') else [{'id':11,'name':'Russian'}]),'releaseGroup':resource.get('releaseGroup') or '', 'indexerFlags':0}
     command=m.api('command','POST',{'name':'ManualImport','files':[imported],'importMode':'copy'});requested['command']=command['id'];requested['importAttempts']=requested.get('importAttempts',0)+1;requested['importAt']=time.time();requested['state']='importing';changed=True;report(m,key,'importing','Серия скачана. Добавляем в Jellyfin через Sonarr')
   if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
