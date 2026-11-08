@@ -11,6 +11,7 @@ import schedule_settings
 import recovery_settings
 import notifications
 import tracker_merge
+import release_details
 POOL=concurrent.futures.ThreadPoolExecutor(max_workers=2);SYNC_LOCK=threading.Lock();DOWNLOAD_LOCK=threading.Lock();CACHE_LOCK=threading.RLock()
 INDEXER_SLOTS=threading.BoundedSemaphore(8)
 STALL_OBSERVATIONS={}
@@ -271,7 +272,7 @@ def jackett_search(m,indexer,query,route,deadline):
     try:return max(0,int(value))
     except (ValueError,TypeError):return 0
    seed=number(attrs.get('seeders'));peers=number(attrs.get('peers'))
-   rows.append({'title':item.findtext('title') or '', 'guid':item.findtext('guid') or '', 'indexerId':indexer['id'], 'indexer':indexer.get('name','Jackett'), 'downloadUrl':url, 'size':number(item.findtext('size')), 'seeders':seed, 'leechers':max(0,peers-seed), 'publishDate':item.findtext('pubDate')})
+   rows.append({'title':item.findtext('title') or '', 'guid':item.findtext('guid') or '', 'infoUrl':item.findtext('comments') or '', 'indexerId':indexer['id'], 'indexer':indexer.get('name','Jackett'), 'downloadUrl':url, 'size':number(item.findtext('size')), 'seeders':seed, 'leechers':max(0,peers-seed), 'publishDate':item.findtext('pubDate')})
   return rows
  finally:INDEXER_SLOTS.release()
 
@@ -389,6 +390,17 @@ def normalize(m,row,profile,source,expected=None):
   span=re.search(r'(?i)\bS(\d{1,2})E(\d{1,3})\s*[-–]\s*(?:E)?(\d{1,3})(?!\d)',title)
   if span and int(span[1])==info.get('seasonNumber') and 0<int(span[2])<=int(span[3])<=100:numbers=list(range(int(span[2]),int(span[3])+1))
   row={**row,'seasonNumber':info.get('seasonNumber'),'episodeNumbers':numbers,'fullSeason':info.get('fullSeason',False),'quality':q,'languages':info.get('languages',[])}
+  # A tracker description is optional: schedule asynchronously and use only
+  # already available evidence from trusted, bounded detail-page fetches.
+  if row.get('infoUrl') and (veto or score<profile['minFormatScore'] or not voices):
+   evidence=release_details.get_or_schedule(row.get('infoUrl'),m.STUDIOS,title,m.BASE,m.HEAD)
+   if evidence and (evidence.get('russian') or evidence.get('voices')):
+    try:
+     formats=evidence['formats']
+     score=sum(scores.get(x['id'],0) for x in formats);veto=any(x.get('name')==rt.settings()['veto_format'] for x in formats)
+     for voice in evidence.get('voices',[]):
+      if voice not in voices:voices.append(voice)
+    except Exception:pass
  allowed=quality_id_allowed(profile,qinfo.get('id')) and score>=profile['minFormatScore'] and not veto
  if not allowed:reasons.append('Не соответствует качеству, русскому языку или выбранной озвучке')
  known_ignorable=('episode is not monitored','season is not monitored','series is not monitored','full season','season pack','one or more episodes','episode was not requested')
@@ -524,6 +536,16 @@ def search(m,key,e,on_progress=None):
       if time.time()-last_publish>.5:publish()
      except Exception:continue
     publish()
+  # Re-evaluate only evidence which has already arrived. Do not wait for
+  # optional lookups: an unfinished or failed tracker page never blocks search.
+  for idx,entry in enumerate(private):
+   if entry['display'].get('allowed'):continue
+   if not entry['row'].get('infoUrl') or not release_details.get_or_schedule(entry['row'].get('infoUrl'),m.STUDIOS,entry['row'].get('title',''),m.BASE,m.HEAD):continue
+   try:
+    revised,parsed=normalize(m,entry['row'],profile,'prowlarr',series)
+    revised['key']=entry['display']['key'];entry.update(row=parsed,display=revised);public[idx]=revised
+   except Exception:continue
+  publish()
  finally:pool.shutdown(wait=False,cancel_futures=True)
  return public,errors
 
