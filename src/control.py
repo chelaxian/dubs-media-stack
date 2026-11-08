@@ -29,7 +29,7 @@ def mobile_artifact_names():
  return {x['file'] for x in rt.mobile_artifacts()}
 def mobile_artifacts():
  return rt.mobile_artifacts()
-WORKER_FILES={'pending-sources.json','cleanup-status.json','deleted.json'}
+WORKER_FILES={'pending-sources.json','cleanup-status.json','deleted.json','verify-status.json'}
 def state_path(name):
  if name not in {'preferences.json','myshows-auth.json','cleanup-request.json'}|WORKER_FILES:raise ValueError('Invalid state name')
  return (WORKER_STATE if name in WORKER_FILES else STATE)/name
@@ -302,6 +302,7 @@ def source_copy(seriesid,fileid,library):
 def disable_source(source):
  mp=rt.media_paths();downloads=mp['downloads']
  torrents=trpc('torrent-get',{'fields':['id','downloadDir','files','fileStats']})['torrents']
+ touched=[]
  for t in torrents:
   for i,f in enumerate(t['files']):
    raw=t['downloadDir'].rstrip('/')+'/'+f['name']
@@ -311,6 +312,7 @@ def disable_source(source):
    candidate=Path(mp['torrent_host']+'/'+raw.removeprefix(downloads+'/'))
    if candidate!=source:continue
    candidate=safe_path(str(candidate),mp['torrent_host'])
+   touched.append(t['id'])
    stats=t.get('fileStats',[])
    # Stop before removing the last selected source. A running seeder otherwise
    # reports missing data after intentional watched-episode cleanup. Keep shared
@@ -318,6 +320,51 @@ def disable_source(source):
    if len(stats)==len(t['files']) and not any(j!=i and fs.get('wanted',False) for j,fs in enumerate(stats)):
     trpc('torrent-stop',{'ids':[t['id']]})
    trpc('torrent-set',{'ids':[t['id']],'files-unwanted':[i]})
+ return touched
+
+def verify_torrents(ids):
+ """Recheck piece state after intentional file removal."""
+ ids=sorted({i for i in ids if isinstance(i,int)})
+ if ids:trpc('torrent-verify',{'ids':ids})
+
+_CORRUPT_HINT=re.compile(r'verify local data|corrupt',re.I)
+
+def repair_corrupt_torrents():
+ """Self-heal Transmission piece errors caused by watched-file cleanup.
+
+ Deleted watched sources leave a stale piece bitmap. Seeding then reports a
+ corrupt piece and waits for a manual verify. Deselect any file Transmission
+ considers complete but which is intentionally gone from disk, then recheck.
+ A torrent with no files on disk at all is left to the normal repair path.
+ """
+ mp=rt.media_paths();repaired=[]
+ try:
+  torrents=trpc('torrent-get',{'fields':['id','name','errorString','downloadDir','files','fileStats']})['torrents']
+ except Exception as e:
+  logging.warning('Corrupt torrent lookup failed: %s',type(e).__name__);return
+ for t in torrents:
+  if not _CORRUPT_HINT.search(t.get('errorString','') or ''):continue
+  files=t.get('files',[]);stats=t.get('fileStats',[])
+  if len(files)!=len(stats):continue
+  paths=[]
+  for f in files:
+   raw=t.get('downloadDir','').rstrip('/')+'/'+f.get('name','')
+   if not raw.startswith(mp['downloads']+'/'):paths.append(None);continue
+   rel=raw[len(mp['downloads'])+1:]
+   try:paths.append(safe_path(mp['torrent_host']+'/'+rel,mp['torrent_host']))
+   except ValueError:paths.append(None)
+  present=any(p is not None and (p.exists() or p.with_name(p.name+'.part').exists()) for p in paths)
+  unwanted=[]
+  for i,(f,st,p) in enumerate(zip(files,stats,paths)):
+   if not st.get('wanted') or p is None:continue
+   gone=not p.exists() and not p.with_name(p.name+'.part').exists()
+   # Complete-but-missing is the signature of intentional watched cleanup;
+   # genuinely corrupt data keeps the file present on disk.
+   if gone and present and st.get('bytesCompleted',0)>=f.get('length',-1):unwanted.append(i)
+  if unwanted:trpc('torrent-set',{'ids':[t['id']],'files-unwanted':unwanted})
+  trpc('torrent-verify',{'ids':[t['id']]})
+  repaired.append({'torrent':t.get('name'),'deselected':unwanted})
+ if repaired:save('verify-status.json',{'time':time.time(),'state':'Целостность восстановлена','repaired':repaired})
 
 def cleanup(dry=False):
  if ROLE!='worker':raise PermissionError('Cleanup is restricted to worker')
@@ -329,7 +376,7 @@ def cleanup(dry=False):
   save('cleanup-status.json',{'time':time.time(),'state':'Хранилище не готово ('+reason+'); удаление не выполнялось'});return
  auth=load('myshows-auth.json',{});token=auth.get('token')
  if not token:save('cleanup-status.json',{'time':time.time(),'state':'Нужно подключить MyShows; удаление не выполнялось'});return
- verify_token(token);deleted=[];errors=[]
+ verify_token(token);deleted=[];errors=[];verify_ids=[]
  # Include every verified previously mapped show, even if moved from watching to completed.
  mapping=json.loads((rt.feed_state_root()/'mapping.json').read_text());series={s['tvdbId']:s for s in api('series')}
  for mid,m in mapping.items():
@@ -364,7 +411,7 @@ def cleanup(dry=False):
       if not allowed:save('cleanup-status.json',{'time':time.time(),'state':'Удаление просмотренных отключено; файлы сохраняются'});return
       # Remove monitoring first; an interruption may leave files, never a re-download loop.
       api('episode/monitor','PUT',{'episodeIds':[e['id'] for e in group],'monitored':False})
-      if source:disable_source(source)
+      if source:verify_ids+=disable_source(source)
       # Persist the exact pending source before deleting the library file; crash recovery retries it.
       source_id=fingerprint(source) if source else None
       if source:
@@ -382,16 +429,18 @@ def cleanup(dry=False):
    try:
     with watch_settings.deletion_guard() as allowed:
      if not allowed:return
-     p=safe_path(record['path'],rt.media_paths()['torrent_host']);disable_source(p);unlink_media(p,record['fingerprint'])
+     p=safe_path(record['path'],rt.media_paths()['torrent_host']);verify_ids+=disable_source(p);unlink_media(p,record['fingerprint'])
    except Exception:remaining.append(record)
   save('pending-sources.json',remaining)
+ try:verify_torrents(verify_ids)
+ except Exception as e:logging.warning('Post-cleanup verify failed: %s',type(e).__name__)
  save('cleanup-status.json',{'time':time.time(),'state':'Предпросмотр' if dry else ('Проверка завершена с ошибками' if errors else 'Проверка завершена'),'files':deleted,'errors':errors})
 
 def worker():
  # Epoch/cursor must exist before anything else serves or cleans up; the
  # journal init never requires upstream authentication and never raises here.
  notifications.journal_init()
- last=0
+ last=0;last_verify=0
  while True:
   requested=load('cleanup-request.json',{}).get('requested',0)
   if not isinstance(requested,(int,float)):requested=0
@@ -400,6 +449,10 @@ def worker():
    try:cleanup()
    except Exception as e:save('cleanup-status.json',{'time':time.time(),'state':'Ошибка проверки; удаление прервано','error':type(e).__name__})
    last=time.time()
+  if now-last_verify>=recovery_settings.current()['verify_retry_min']*60:
+   try:repair_corrupt_torrents()
+   except Exception as e:logging.warning('Corrupt repair failed: %s',type(e).__name__)
+   last_verify=time.time()
   time.sleep(30)
 
 STYLE=(rt.ui_dir()/'style.css').read_text()

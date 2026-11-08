@@ -11,6 +11,7 @@ FIELDS={
  'start_backoff_min':(60,10,1440),
  'indexer_recheck_min':(60,30,1440),
  'cleanup_min':(30,5,1440),
+ 'verify_retry_min':(5,1,1440),
  'start_retry_sec':(60,30,600),
  'start_attempts':(3,1,10),
 }
