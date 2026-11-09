@@ -23,6 +23,7 @@
 {
   "login": "",                        // ник вашего аккаунта MyShows (ОДИН аккаунт на инстанс панели)
   "proxy": "",                        // необязательный socks5 host:port; пусто = напрямую
+  "release_detail_proxies": [],       // необязательные запасные socks5 host:port для страниц раздач
   "timezone": "Europe/Moscow",        // часовой пояс ежедневного прохода обновления
   "owner_label": "",
   "public_url": "",                   // https URL панели за reverse proxy

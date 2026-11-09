@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import release_details as d
 
@@ -31,3 +32,10 @@ def test_failure_is_optional_and_schedule_is_nonblocking():
         assert time.monotonic() - start < .2
     finally:
         d._fetch = original
+
+def test_proxy_routes_are_validated_from_settings():
+    raw = ['203.0.113.10:1080', 'bad', 5, 'host:99999', 'ok.example:9050', 'a:b']
+    with patch.object(d.rt, 'settings', return_value={'release_detail_proxies': raw}):
+        assert d.proxy_routes() == ['203.0.113.10:1080', 'ok.example:9050']
+    with patch.object(d.rt, 'settings', return_value={}):
+        assert d.proxy_routes() == []
