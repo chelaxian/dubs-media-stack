@@ -1,7 +1,7 @@
 # dubs-media-stack
 
-**Приватный проект** — [chelaxian/dubs-media-stack](https://github.com/chelaxian/dubs-media-stack).
-Доступ к репозиторию только по приглашению; клонирование требует авторизованного Git-клиента.
+**Открытый проект под лицензией MIT** — [chelaxian/dubs-media-stack](https://github.com/chelaxian/dubs-media-stack).
+Репозиторий можно свободно клонировать, использовать и форкать; условия — в [LICENSE](LICENSE).
 
 Личный медиастек для домашних сериалов с обязательной русской озвучкой:
 **MyShows (список «смотрю») → Sonarr → Transmission → Jellyfin**, запросы через **Seerr**,
