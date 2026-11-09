@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.parse
 import requests
+import runtime as rt
 
 _POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix='release-details')
 _LOCK = threading.Lock()
@@ -73,7 +74,7 @@ def extract(body, studios):
 def _fetch(url, studios):
     # Limit each route and total downloaded bytes; a timeout or HTTP failure is
     # inconclusive, not a search error. Never follow a redirect to another host.
-    for proxy in (None, '10.11.0.224:1080', '10.11.0.224:1081'):
+    for proxy in [None] + proxy_routes():
         args = ['curl', '--silent', '--show-error', '--fail', '--max-time', '2', '--max-filesize', '300000', '--range', '0-299999', '--proto', '=https']
         if proxy: args += ['--socks5-hostname', proxy]
         try:
@@ -86,6 +87,25 @@ def _fetch(url, studios):
         except (OSError, subprocess.SubprocessError, ValueError):
             continue
     return None
+
+def proxy_routes():
+    """Optional SOCKS5 fallback routes from config.json.
+
+    "release_detail_proxies": ["host:port", ...] — tried in order after the
+    direct route. Empty or invalid entries are ignored, never fatal.
+    """
+    try:
+        raw = rt.settings().get('release_detail_proxies') or []
+    except Exception:
+        return []
+    routes = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, str) or item.count(':') != 1:
+            continue
+        host, port = item.rsplit(':', 1)
+        if host and re.fullmatch(r'[A-Za-z0-9._-]{1,63}', host) and port.isdigit() and 1 <= int(port) <= 65535:
+            routes.append(host + ':' + port)
+    return routes[:4]
 
 
 def _lookup(url, studios, title, base, headers):

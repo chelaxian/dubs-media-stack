@@ -67,6 +67,7 @@ def _settings_uncached():
     cfg = load_json(config_root()/'config.json', {})
     out = {
         'proxy': cfg.get('proxy') or '',                       # optional SOCKS5 host:port; empty = direct
+        'release_detail_proxies': [str(x) for x in (cfg.get('release_detail_proxies') or []) if isinstance(x, str)][:4],  # optional SOCKS5 fallbacks for tracker detail pages
         'login': cfg.get('login') or '',                       # MyShows account that tokens must belong to
         'timezone': cfg.get('timezone') or os.environ.get('SERIES_CONTROL_TIMEZONE', 'Europe/Moscow'),
         'owner_label': cfg.get('owner_label') or cfg.get('login') or 'Owner',
