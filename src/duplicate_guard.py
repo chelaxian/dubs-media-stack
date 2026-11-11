@@ -58,12 +58,9 @@ def _remove_orphaned_job(m, entry):
     job = next((x.get('job') for x in members if isinstance(x.get('job'), str)), None)
     if not job or not re.fullmatch(r'[0-9a-f]{32}', job):
         return []
-    root = Path(rt.media_paths()['torrent_host']) / 'complete' / 'tv' / 'Panel' / job
-    try:
-        root = m.safe_path(root, rt.media_paths()['torrent_host'])
-    except (OSError, ValueError):
-        return []
-    if not root.exists():
+    torrent_root = Path(rt.media_paths()['torrent_host'])
+    root = torrent_root / 'complete' / 'tv' / 'Panel' / job
+    if root.is_symlink() or not root.is_dir():
         entry['sourceOrphanCleanedAt'] = time.time()
         return []
     removed = []
