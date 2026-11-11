@@ -7,7 +7,7 @@ import duplicate_guard as guard
 class Tests(unittest.TestCase):
  def env(self,d):
   root=Path(d);(root/'managed-downloads.json').unlink(missing_ok=True)
-  m=types.SimpleNamespace(WORKER_STATE=root,trpc=Mock(),clean_file_path=lambda x:x,safe_path=lambda p,_root=None:Path(p),fingerprint=lambda p:[1,2,p.stat().st_size],disable_source=Mock())
+  m=types.SimpleNamespace(WORKER_STATE=root,trpc=Mock(),safe_path=lambda p,_root=None:Path(p),fingerprint=lambda p:[1,2,p.stat().st_size],disable_source=Mock())
   def unlink(path,expected):
    self.assertEqual(expected,[1,2,path.stat().st_size]);path.unlink()
   m.unlink_media=unlink
