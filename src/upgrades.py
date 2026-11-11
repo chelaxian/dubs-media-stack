@@ -109,7 +109,7 @@ def upgrade_one(m,ep,e):
  if any(x['episode']['id']==e['id'] and x['state'] not in ('done','cancelled') for v in managed.values() for x in v['episodes']):return 'busy'
  key=secrets.token_hex(16);e=dict(e,_upgradeFileId=current['episodeFileId'])
  requests=m.WORKER_STATE/'upgrade-requests';requests.mkdir(exist_ok=True)
- ep.atomic(requests/(key+'.json'),{'created':time.time(),'episode':e['id']},0o600)
+ ep.atomic(requests/(key+'.json'),{'created':time.time(),'episode':e['id']},0o640)
  ep.search(m,key,e)
  cache=ep.read(m.WORKER_STATE/'release-cache'/(key+'.json'),{})
  candidates=[]
@@ -140,7 +140,7 @@ def run_daily(m,ep,dry=False):
    state=ep.read(m.WORKER_STATE/'daily-upgrades.json',{})
    if state.get('day')==day and state.get('started') and not state.get('finished'):
     notifications.upgrade_result(day,0,1,len(state.get('results',[])))
-    state.update({'finished':time.time(),'error':True});ep.atomic(m.WORKER_STATE/'daily-upgrades.json',state,0o600)
+    state.update({'finished':time.time(),'error':True});ep.atomic(m.WORKER_STATE/'daily-upgrades.json',state,0o640)
   raise
 
 def _run_daily(m,ep,dry=False):
@@ -149,7 +149,7 @@ def _run_daily(m,ep,dry=False):
  day=datetime.datetime.now(TZ).date().isoformat()
  result={'day':day,'scheduledSlot':schedule_slot(),'started':time.time(),'timezone':str(TZ),'results':[]}
  if not dry:
-  ep.atomic(path,result,0o600)
+  ep.atomic(path,result,0o640)
   notifications.upgrade_started(day)
  ep.refresh(m,True)
  snapshot=ep.read(m.WORKER_STATE/'myshows-episodes.json',{})
@@ -165,10 +165,10 @@ def _run_daily(m,ep,dry=False):
    except Exception as exc:
     logging.warning('Daily upgrade episode %s: %s',e['id'],type(exc).__name__);status='error_existing_file_preserved'
    result['results'].append({'episode':e['id'],'series':e['seriesTitle'],'season':e['season'],'number':e['number'],'status':status})
-   if not dry:ep.atomic(path,result,0o600)
+   if not dry:ep.atomic(path,result,0o640)
  result['finished']=time.time()
  if not dry:
-  ep.atomic(path,result,0o600)
+  ep.atomic(path,result,0o640)
   found=sum(1 for x in result['results'] if x['status']=='downloading')
   errors=sum(1 for x in result['results'] if x['status'] in ('unavailable','error_existing_file_preserved'))
   notifications.upgrade_result(day,found,errors,len(result['results']))

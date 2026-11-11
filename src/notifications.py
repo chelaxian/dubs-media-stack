@@ -228,7 +228,7 @@ def _read_state(m,name):
 
 def _save_state(m,name,state):
  import episodes
- episodes.atomic(m.WORKER_STATE/name,state,0o600)
+ episodes.atomic(m.WORKER_STATE/name,state,0o640)
 
 def datetime_stamp(raw):
  import datetime as dt

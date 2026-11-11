@@ -20,6 +20,12 @@ VIDEO={'.mkv','.mp4','.avi','.m4v','.ts','.mov','.webm'};AUX={'.srt','.ass','.ss
 class UserError(Exception):pass
 
 def atomic(path,data,mode=0o640):
+ # Worker state is deliberately shared with the read-only web role. Keep
+ # every JSON snapshot group-readable so a private-mode caller cannot make
+ # the panel return a generic service-unavailable response after a restart.
+ try:
+  if path.is_relative_to(rt.worker_root()):mode=max(mode,0o640)
+ except (OSError,TypeError,ValueError):pass
  tmp=path.parent/('.'+path.name+'.'+secrets.token_hex(8));fd=os.open(tmp,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,mode);os.fchmod(fd,mode)
  with os.fdopen(fd,'w') as f:json.dump(data,f,ensure_ascii=False);f.flush();os.fsync(f.fileno())
  os.replace(tmp,path)
@@ -290,7 +296,7 @@ def recheck_disabled_indexer(m):
   if now-prior.get('last',0)<delay:continue
   # Persist before calling upstream: even a process crash cannot create a
   # rapid authentication loop on a protected tracker.
-  history[str(idx)]={'last':now,'cooldown':3600,'result':'testing'};atomic(path,history,0o600)
+  history[str(idx)]={'last':now,'cooldown':3600,'result':'testing'};atomic(path,history,0o640)
   try:
    indexer=indexer_api(m,'indexer/'+str(idx))
    response=requests.post(base+'indexer/test',headers=headers,json=indexer,timeout=(5,60))
@@ -301,7 +307,7 @@ def recheck_disabled_indexer(m):
     if any(x in text for x in ('password','credentials','unauthorized','captcha','login failed','invalid login')):history[str(idx)]['cooldown']=43200
     history[str(idx)]['result']='failed'
   except (requests.RequestException,ValueError,KeyError):history[str(idx)]['result']='unavailable'
-  atomic(path,history,0o600)
+  atomic(path,history,0o640)
   return
 def sonarr_search(m,e):
  r=requests.get(m.BASE+'/release',params=({'seriesId':e['seriesId'],'seasonNumber':e['season']} if e.get('seasonSearch') else {'episodeId':e['sonarrId']}),headers=m.HEAD,timeout=(5,45));r.raise_for_status();return r.json()
@@ -492,7 +498,7 @@ def search(m,key,e,on_progress=None):
    if not alive:raise UserError('Заказ отменён')
   elif req.get('op')=='download':check_cancelled(m,key,e['id'])
   elapsed=time.time()-started;estimate=max(0,elapsed/max(1,completed)*(total-completed)) if completed else None
-  atomic(m.WORKER_STATE/'release-cache'/(key+'.json'),{'episode':e,'created':time.time(),'items':private},0o600)
+  atomic(m.WORKER_STATE/'release-cache'/(key+'.json'),{'episode':e,'created':time.time(),'items':private},0o640)
   report(m,progress_key,'running','Поиск: завершено '+str(completed)+' из '+str(total)+' запросов · найдено '+str(len(public))+', подходят '+str(sum(bool(x.get('allowed')) for x in public)),rows=public,warnings=errors,episode=e,search={'completed':completed,'total':total,'elapsed':round(elapsed),'eta':round(estimate) if estimate is not None else None,'active':[v[1] for v in tasks.values()][:6]})
   for child,eid in e.get('batchJobs',[]):
    if child==progress_key:continue
@@ -852,7 +858,7 @@ def request_download(m,key,e,item,metainfo=None,start=True):
   # Persist the start intent before the RPC, so a worker interruption or a
   # transiently stopped torrent cannot leave a selected episode stuck forever.
   owned['startPending']=time.time();owned['startAttempts']=0;owned.pop('startFailed',None)
-  managed[h]=owned;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+  managed[h]=owned;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
   if start:m.trpc('torrent-start',{'ids':[tid]})
  return {'state':'downloading','message':'Загружаются только заказанные серии и их субтитры','hash':h}
 
@@ -861,7 +867,7 @@ def schedule_change(m,eid,value):
   scheduled=read(m.WORKER_STATE/'scheduled-downloads.json',{})
   if value is None:scheduled.pop(str(eid),None)
   else:scheduled[str(eid)]=value
-  atomic(m.WORKER_STATE/'scheduled-downloads.json',scheduled,0o600)
+  atomic(m.WORKER_STATE/'scheduled-downloads.json',scheduled,0o640)
   atomic(m.WORKER_STATE/'scheduled-public.json',{k:{'job':v['job'],'notBefore':v.get('notBefore')} for k,v in scheduled.items()})
 
 def check_cancelled(m,key,eid):
@@ -871,7 +877,7 @@ def check_cancelled(m,key,eid):
 
 def cancel_episode(m,eid):
  with DOWNLOAD_LOCK:
-  stamps=read(m.WORKER_STATE/'cancelled-episodes.json',{});stamps[str(eid)]=time.time();atomic(m.WORKER_STATE/'cancelled-episodes.json',stamps,0o600)
+  stamps=read(m.WORKER_STATE/'cancelled-episodes.json',{});stamps[str(eid)]=time.time();atomic(m.WORKER_STATE/'cancelled-episodes.json',stamps,0o640)
   schedule_change(m,eid,None)
   managed=read(m.WORKER_STATE/'managed-downloads.json',{})
   for h,entry in managed.items():
@@ -885,7 +891,7 @@ def cancel_episode(m,eid):
    if not keep:m.trpc('torrent-stop',{'ids':[h]})
    for x in cancelled:x['state']='cancelled';report(m,x['job'],'cancelled','Заказ отменён; скачанные данные сохранены')
    entry['wanted']=sorted(keep)
-  atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+  atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
   for path in (m.STATE/'requests').glob('*.json'):
    req=read(path,{})
    if req.get('op')=='download' and req.get('episode')==eid and req.get('created',0)<=stamps[str(eid)]:report(m,path.stem,'cancelled','Заказ отменён; скачанные данные сохранены')
@@ -1023,7 +1029,7 @@ def process_batch(m,members):
     if started:
      for h in started:
       m.trpc('torrent-start',{'ids':[h]})
-     atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+     atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
  except UserError as exc:
   if str(exc)=='Заказ отменён':
    for key in pending:report(m,key,'cancelled',str(exc))
@@ -1068,7 +1074,7 @@ def monitor(m):
      ready,_=rt.storage_ready()
      if ready and not t.get('error') and expected and actual==expected:
       entry['startPending']=time.time()-recovery_settings.current()['start_retry_sec'];entry['startAttempts']=0;changed=True
-      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
    elif t.get('status')!=0 and entry.pop('pausedSince',None):changed=True
    # Persisted start intent also survives a worker or host restart.
    if entry.get('startPending'):
@@ -1078,7 +1084,7 @@ def monitor(m):
      attempts=entry.get('startAttempts',0)
      if attempts<recovery_settings.current()['start_attempts']:
       entry['startPending']=time.time();entry['startAttempts']=attempts+1;changed=True
-      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+      atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
       m.trpc('torrent-start',{'ids':[h]})
      else:
       entry.pop('startPending',None);entry.pop('startAttempts',None);entry['startFailed']=True;entry['startFailedAt']=time.time();changed=True
@@ -1151,13 +1157,13 @@ def monitor(m):
     if not resource:report(m,key,'error','Файл скачан, но Sonarr не распознал его для импорта');continue
     if e.get('_manualReplace') and not requested.get('backupMade'):
      try:
-      backup=preserve_replaced_file(m,actual,e);requested.setdefault('replacementCopies',[]).append({'path':backup,'fingerprint':m.fingerprint(backup),'source':False});requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+      backup=preserve_replaced_file(m,actual,e);requested.setdefault('replacementCopies',[]).append({'path':backup,'fingerprint':m.fingerprint(backup),'source':False});requested['backupMade']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
      except UserError as exc:report(m,key,'error',str(exc));continue
     if e.get('_upgradeFileId') and not requested.get('replacementSourcesChecked'):
-     requested.setdefault('replacementCopies',[]).extend(replacement_sources(m,e,actual));requested['replacementSourcesChecked']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+     requested.setdefault('replacementCopies',[]).extend(replacement_sources(m,e,actual));requested['replacementSourcesChecked']=True;atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
     imported={'path':path,'seriesId':e['seriesId'],'episodeIds':[e['sonarrId']],'quality':requested['quality'] if e.get('_upgradeFileId') else resource.get('quality') or requested['quality'],'languages':resource.get('languages') or ([] if e.get('_manualSelection') else [{'id':11,'name':'Russian'}]),'releaseGroup':resource.get('releaseGroup') or '', 'indexerFlags':0}
     command=m.api('command','POST',{'name':'ManualImport','files':[imported],'importMode':'copy'});requested['command']=command['id'];requested['importAttempts']=requested.get('importAttempts',0)+1;requested['importAt']=time.time();requested['state']='importing';changed=True;report(m,key,'importing','Серия скачана. Добавляем в Jellyfin через Sonarr')
-  if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o600)
+  if changed:atomic(m.WORKER_STATE/'managed-downloads.json',managed,0o640)
 
 def run(m):
  # The journal (epoch/cursor) must exist before any worker activity so native
@@ -1226,7 +1232,7 @@ def run(m):
     for eid,item in scheduled.items():
      if now>=item.get('notBefore',0) and now-item['last']>=recovery_settings.current()['search_retry_min']*60 and item['job'] not in active and len(set(active.values()))<2:
       active[item['job']]=POOL.submit(process,m,item['job'],{'op':'download','episode':int(eid),'selection':''});item['last']=now
-    if scheduled:atomic(m.WORKER_STATE/'scheduled-downloads.json',scheduled,0o600)
+    if scheduled:atomic(m.WORKER_STATE/'scheduled-downloads.json',scheduled,0o640)
     last_retry=now
   if int(now)%300<2:
    for p in (m.WORKER_STATE/'release-cache').glob('*.json'):

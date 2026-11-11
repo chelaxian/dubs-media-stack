@@ -98,4 +98,4 @@ def run_one(ep,m):
   state[h]=now
  except Exception as exc:
   logging.warning('Public torrent tracker discovery failed: %s',type(exc).__name__);state[h]=now-18000
- ep.atomic(m.WORKER_STATE/'tracker-merge.json',state,0o600)
+ ep.atomic(m.WORKER_STATE/'tracker-merge.json',state,0o640)

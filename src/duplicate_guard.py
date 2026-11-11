@@ -150,7 +150,7 @@ def run_library(m, episodes):
                 if size:
                     removed.append({'series': current.get('title'), 'episode': 'S%02dE%02d' % number, 'path': str(path), 'bytes': size})
     result = {'state': 'Дубли в медиатеке не найдены' if not duplicates and not unresolved else ('Очистка завершена' if removed or not unresolved else 'Требуется ручная проверка'), 'groups': len(duplicates), 'removed': len(removed), 'bytes': sum(x['bytes'] for x in removed), 'time': time.time(), 'files': removed, 'unresolved': unresolved}
-    episodes.atomic(m.WORKER_STATE / 'duplicate-library-status.json', result, 0o600)
+    episodes.atomic(m.WORKER_STATE / 'duplicate-library-status.json', result, 0o640)
     return result
 
 
@@ -203,14 +203,14 @@ def run(m, episodes):
                     except Exception as exc:
                         logging.warning('Duplicate torrent stop failed: %s', type(exc).__name__)
             if changed:
-                episodes.atomic(m.WORKER_STATE / 'managed-downloads.json', managed, 0o600)
+                episodes.atomic(m.WORKER_STATE / 'managed-downloads.json', managed, 0o640)
         result = {'state': 'Проверка завершена', 'removed': len(removed), 'bytes': sum(x['bytes'] for x in removed), 'time': time.time(), 'files': removed[-100:]}
-        episodes.atomic(m.WORKER_STATE / 'duplicate-source-status.json', result, 0o600)
+        episodes.atomic(m.WORKER_STATE / 'duplicate-source-status.json', result, 0o640)
         return result
     except Exception as exc:
         logging.warning('Duplicate source guard failed: %s', type(exc).__name__)
         try:
-            episodes.atomic(m.WORKER_STATE / 'duplicate-source-status.json', {'state': 'Ошибка проверки', 'error': type(exc).__name__, 'time': time.time()}, 0o600)
+            episodes.atomic(m.WORKER_STATE / 'duplicate-source-status.json', {'state': 'Ошибка проверки', 'error': type(exc).__name__, 'time': time.time()}, 0o640)
         except Exception:
             pass
         return {'state': 'Ошибка проверки', 'removed': 0}
