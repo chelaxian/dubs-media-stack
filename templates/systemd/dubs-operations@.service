@@ -33,6 +33,9 @@ Environment=PYTHONPATH=@REPO@/src
 ExecStart=@PYTHON@ @REPO@/src/control.py
 Restart=on-failure
 RestartSec=5
+# Two parallel episode searches can each use 16 network workers.
+TasksMax=128
+LimitNOFILE=512
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
