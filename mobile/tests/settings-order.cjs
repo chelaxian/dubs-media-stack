@@ -15,7 +15,7 @@ const html=execFileSync('python3',[path.join(__dirname,'render-fixture.py')],{en
  });
  await page.goto('https://settings.test/#settings');
  await page.locator('#events-panel').waitFor();
- const order=['studio-order-panel','events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel'];
+ const order=['studio-order-panel','events-panel','account-panel','apps-panel','appearance-panel','player-panel','cleanup-panel','download-panel','recovery-panel'];
  assert.deepEqual(await page.locator('#settings .panel').evaluateAll(ns=>ns.map(n=>n.id)),order);
  const bounds=()=>page.locator('#settings .panel').evaluateAll(ns=>Object.fromEntries(ns.map(n=>{const r=n.getBoundingClientRect();return[n.id,{x:r.x,y:r.y,bottom:r.bottom,width:r.width,height:r.height}]})));
  for(const width of [1440,900,720]){
