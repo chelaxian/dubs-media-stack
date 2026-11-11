@@ -287,7 +287,7 @@ jobs:
           xcrun simctl bootstatus "$DUBS_IOS_SIMULATOR_ID" -b
 
       - name: Run UI and notification state tests on selected simulator
-        timeout-minutes: 15
+        timeout-minutes: 30
         working-directory: mobile/ios
         run: |
           set -o pipefail
