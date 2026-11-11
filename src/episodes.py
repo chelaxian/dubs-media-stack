@@ -5,6 +5,7 @@ import requests
 import sys
 import jellyfin_links
 import studio_order
+import duplicate_guard
 import runtime as rt
 import upgrades
 import schedule_settings
@@ -1166,11 +1167,15 @@ def run(m):
  for path in (m.STATE/'requests').glob('*.json'):
   status=m.WORKER_STATE/'jobs'/path.name
   if read(status,{}).get('state') in ('queued','running'):status.unlink(missing_ok=True)
- active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0;last_indexer_check=0;last_merge=time.time();merge_pool=concurrent.futures.ThreadPoolExecutor(max_workers=1);merge_future=None
+ active={};last_refresh=0;last_monitor=0;last_retry=0;last_daily=0;last_observe=0;last_order=0;last_indexer_check=0;last_duplicate=0;last_library_duplicate=0;last_merge=time.time();merge_pool=concurrent.futures.ThreadPoolExecutor(max_workers=1);merge_future=None
  while True:
   now=time.time()
   if now-last_order>=30:
    studio_order.reconcile(m);last_order=now
+  if now-last_duplicate>=60 and 'duplicate-source' not in active and len(set(active.values()))<2:
+   active['duplicate-source']=POOL.submit(duplicate_guard.run,m,sys.modules[__name__]);last_duplicate=now
+  if now-last_library_duplicate>=900 and 'duplicate-library' not in active and len(set(active.values()))<2:
+   active['duplicate-library']=POOL.submit(duplicate_guard.run_library,m,sys.modules[__name__]);last_library_duplicate=now
   if now-last_indexer_check>=60 and 'indexer-health' not in active and len(set(active.values()))<2:
    active['indexer-health']=POOL.submit(recheck_disabled_indexer,m);last_indexer_check=now
   for key,future in list(active.items()):
