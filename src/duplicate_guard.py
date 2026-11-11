@@ -15,7 +15,7 @@ from pathlib import Path
 import runtime as rt
 
 
-def _source_path(m, torrent, index):
+def _source_path(m, torrent, index, episodes):
     files = torrent.get('files') or []
     if not isinstance(index, int) or not 0 <= index < len(files):
         return None
@@ -23,7 +23,7 @@ def _source_path(m, torrent, index):
     downloads = rt.media_paths()['downloads']
     if not raw_base.startswith(downloads + '/'):
         return None
-    raw = raw_base + '/' + m.clean_file_path(files[index].get('name', ''))
+    raw = raw_base + '/' + episodes.clean_file_path(files[index].get('name', ''))
     host = rt.media_paths()['torrent_host'] + raw.removeprefix(downloads)
     try:
         return m.safe_path(host, rt.media_paths()['torrent_host'])
@@ -208,7 +208,7 @@ def run(m, episodes):
                     logging.warning('Duplicate source deselect failed: %s', type(exc).__name__)
                     continue
                 for member in finished:
-                    path = _source_path(m, torrent, member.get('video'))
+                    path = _source_path(m, torrent, member.get('video'), episodes)
                     if path is None:
                         continue
                     before = len(removed)
