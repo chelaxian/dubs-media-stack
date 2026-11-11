@@ -64,37 +64,16 @@ def _remove_orphaned_job(m, entry):
         entry['sourceOrphanCleanedAt'] = time.time()
         return []
     removed = []
-    if all(x.get('state') == 'done' for x in members):
-        for path in root.rglob('*'):
-            if path.is_file():
-                removed.append({'torrent': job, 'path': str(path), 'bytes': path.stat().st_size})
-        try:
-            shutil.rmtree(root)
-            entry['sourceOrphanCleanedAt'] = time.time()
-            return removed
-        except OSError as exc:
-            logging.warning('Orphan source directory cleanup deferred: %s', type(exc).__name__)
-            return []
-    wanted = {(x.get('episode', {}).get('season'), x.get('episode', {}).get('number')) for x in members if x.get('state') == 'done'}
     for path in root.rglob('*'):
-        if not path.is_file() or path.suffix.lower() not in {'.mkv', '.mp4', '.avi', '.m4v', '.ts', '.m2ts', '.webm'}:
-            continue
-        match = re.search(r'(?i)[s](\d{1,2})[e](\d{1,3})', path.name)
-        if not match or (int(match.group(1)), int(match.group(2))) not in wanted:
-            continue
-        try:
-            expected = m.fingerprint(path)
-            m.unlink_media(path, expected)
-            removed.append({'torrent': job, 'path': str(path), 'bytes': 0})
-        except (OSError, ValueError) as exc:
-            logging.warning('Orphan episode cleanup deferred: %s', type(exc).__name__)
-    if not any(x for x in root.rglob('*') if x.is_file()):
-        try:
-            root.rmdir()
-        except OSError:
-            pass
-    entry['sourceOrphanCleanedAt'] = time.time()
-    return removed
+        if path.is_file():
+            removed.append({'torrent': job, 'path': str(path), 'bytes': path.stat().st_size})
+    try:
+        shutil.rmtree(root)
+        entry['sourceOrphanCleanedAt'] = time.time()
+        return removed
+    except OSError as exc:
+        logging.warning('Orphan source directory cleanup deferred: %s', type(exc).__name__)
+        return []
 
 
 def _episode_key(path):

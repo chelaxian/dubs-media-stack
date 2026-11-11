@@ -45,7 +45,7 @@ class Tests(unittest.TestCase):
  def test_orphaned_finished_job_directory_is_removed(self):
   with tempfile.TemporaryDirectory() as d:
    m=self.env(d);root=Path(d)/'torrent'/'complete'/'tv'/'Panel'/('b'*32);root.mkdir(parents=True);video=root/'Show.S01E01.mkv';video.write_bytes(b'123')
-   h='c'*40;ep.atomic(m.WORKER_STATE/'managed-downloads.json',{h:{'wanted':[0],'episodes':[{'job':'b'*32,'state':'done','video':0,'episode':{'season':1,'number':1}}]}},0o600)
+   h='c'*40;ep.atomic(m.WORKER_STATE/'managed-downloads.json',{h:{'wanted':[0],'episodes':[{'job':'b'*32,'state':'done','video':0,'episode':{'season':1,'number':1}},{'job':'d'*32,'state':'cancelled','video':0,'episode':{'season':1,'number':2}}]}},0o600)
    m.trpc.return_value={'torrents':[]};paths={'shows_host':str(Path(d)/'shows'),'torrent_host':str(Path(d)/'torrent'),'downloads':'/downloads'}
    with patch.object(guard.rt,'media_paths',return_value=paths):result=guard.run(m,ep)
    self.assertFalse(root.exists());self.assertEqual(result['removed'],1);state=ep.read(m.WORKER_STATE/'managed-downloads.json',{});self.assertIn('sourceOrphanCleanedAt',state[h])
