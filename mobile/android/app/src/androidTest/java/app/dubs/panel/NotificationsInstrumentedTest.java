@@ -178,6 +178,7 @@ public class NotificationsInstrumentedTest {
    // AppOps is the OS app-level notification switch; unlike revoking a
    // runtime permission from the test process it does not kill the runner.
    assertEquals("appops set emitted unexpected output: "+permissionShellTrace,"",shell("cmd appops set "+context.getPackageName()+" POST_NOTIFICATION "+(allowed?"allow":"ignore")));
+   assertEquals("uid appops set emitted unexpected output: "+permissionShellTrace,"",shell("cmd appops set --uid "+context.getPackageName()+" POST_NOTIFICATION "+(allowed?"allow":"ignore")));
    int expected=allowed?android.app.AppOpsManager.MODE_ALLOWED:android.app.AppOpsManager.MODE_IGNORED;
    long started=android.os.SystemClock.elapsedRealtime();
    permissionShellTrace.append("rawModeImmediatelyAfterSet=").append(notificationOpMode(true)).append('\n');
