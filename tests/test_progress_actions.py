@@ -59,4 +59,18 @@ class Tests(unittest.TestCase):
    m.trpc.return_value={'torrents':[{'hashString':h,'files':[{'length':100,'name':'Show.S01E01.mkv'}],'fileStats':[{'bytesCompleted':100}],'downloadDir':'/downloads/complete/tv/Panel/job'}]}
    m.api.side_effect=lambda p,*args:[{'path':path}] if p.startswith('manualimport?') else {'id':12}
    ep.monitor(m);body=m.api.call_args.args[2];self.assertEqual(body['files'][0]['episodeIds'],[42]);self.assertNotIn('downloadId',body['files'][0]);self.assertEqual(body['importMode'],'copy')
+ def test_orphaned_import_command_is_retried(self):
+  with tempfile.TemporaryDirectory() as d:
+   m=self.env(d);h='a'*40;key='b'*32;path='/torrents/complete/tv/Panel/job/Show.S01E01.mkv'
+   ep.atomic(m.WORKER_STATE/'managed-downloads.json',{h:{'episodes':[{'job':key,'episode':{'id':1,'sonarrId':42,'seriesId':21},'state':'importing','command':12,'importAttempts':3,'importAt':time.time()-3600,'wanted':[0],'video':0,'quality':{}}]}})
+   m.trpc.return_value={'torrents':[{'hashString':h,'files':[{'length':100,'name':'Show.S01E01.mkv'}],'fileStats':[{'bytesCompleted':100}],'downloadDir':'/downloads/complete/tv/Panel/job'}]}
+   def api(p,*args):
+    if p=='episode/42':return {'hasFile':False,'episodeFileId':0}
+    if p=='command/12':return {'status':'orphaned'}
+    if p.startswith('manualimport?'):return [{'path':path,'quality':{},'languages':[{'id':11,'name':'Russian'}]}]
+    if p=='command':return {'id':13}
+    return {}
+   m.api.side_effect=api
+   ep.monitor(m);entry=ep.read(m.WORKER_STATE/'managed-downloads.json',{})[h]['episodes'][0]
+   self.assertEqual(entry['command'],13);self.assertEqual(entry['importAttempts'],1);r=ep.result(m,key);self.assertEqual(r['state'],'importing');self.assertIn('Добавляем',r['message'])
 if __name__=='__main__':unittest.main()

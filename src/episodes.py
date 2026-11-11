@@ -1107,7 +1107,10 @@ def monitor(m):
       if requested.get('restoreMonitor'):m.api('episode/monitor','PUT',{'episodeIds':[e['sonarrId']],'monitored':True})
       continue
      command=m.api('command/'+str(requested['command']))
-     if command.get('status') in ('failed','completed'):
+     if command.get('status')=='orphaned' and time.time()-requested.get('importAt',0)>=60:
+      # Sonarr lost the command (service restart); nothing failed — queue a clean retry.
+      requested.pop('command',None);requested['importAttempts']=0;changed=True
+     elif command.get('status') in ('failed','completed'):
       if requested.get('importAttempts',0)<3 and time.time()-requested.get('importAt',0)>=60:
        requested.pop('command',None);changed=True
       else:
