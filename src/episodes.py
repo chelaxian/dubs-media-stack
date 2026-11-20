@@ -108,6 +108,32 @@ def refresh(m,wait=False):
    if eps:
     eps.sort(key=lambda x:(x.get('season') or 0,x.get('number') or 0));result={'id':show['id'],'seriesId':sid,'title':entry['title'],'status':show.get('status'),'episodes':eps};(released if view=='released' else upcoming).append(result)
   for group in unwatched:convert(group,'released')
+  # MyShows occasionally omits aired, unwatched episodes from its list.
+  # Recover only explicit scheduled orders and confirm watched state directly.
+  pending=read(m.WORKER_STATE/'scheduled-downloads.json',{})
+  watched_by_show={}
+  for eid,order in pending.items():
+   saved=order.get('episode',{});show_id=saved.get('showId')
+   if str(eid) in byid or show_id not in watching:continue
+   try:
+    if show_id not in watched_by_show:
+     token=m.load('myshows-auth.json',{}).get('token')
+     records=m.myrpc('profile.Episodes',{'showId':int(show_id)},token)
+     if not isinstance(records,list):raise ValueError('Invalid watched list')
+     watched_by_show[show_id]={str(x['id']) for x in records}
+    if str(eid) in watched_by_show[show_id]:continue
+    item=v3(m,'shows.Episode',{'id':int(eid)})
+    if not isinstance(item,dict) or item.get('showId')!=show_id or str(item.get('id'))!=str(eid):continue
+    stamp=utcdate(item.get('airDate'))
+    if stamp is None or stamp>time.time():continue
+    existing=next((group for group in released if group['id']==show_id),None)
+    before=len(released)
+    convert({'show':{'id':show_id},'episodes':[item]},'released')
+    if existing is not None and len(released)>before:
+     existing['episodes'].extend(released.pop()['episodes'])
+     existing['episodes'].sort(key=lambda x:(x.get('season') or 0,x.get('number') or 0))
+   except Exception:
+    logging.warning('Could not verify missing scheduled MyShows episode')
   for day in calendar.get('days',[]):
    for group in day.get('shows',[]):convert(group,'upcoming',day.get('date'))
   result={'updated':time.time(),'metadataUpdated':metadata_started,'released':released,'upcoming':upcoming,'episodes':byid,'source':'MyShows lists.EpisodesUnwatched / entity.Calendar','error':None}
