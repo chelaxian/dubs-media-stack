@@ -434,7 +434,8 @@ def normalize(m,row,profile,source,expected=None):
      for voice in evidence.get('voices',[]):
       if voice not in voices:voices.append(voice)
     except Exception:pass
- allowed=quality_id_allowed(profile,qinfo.get('id')) and score>=profile['minFormatScore'] and not veto
+ original=bool(re.fullmatch(r'Сериал / база [0-9]+ / Оригинал',profile.get('name','')))
+ allowed=quality_id_allowed(profile,qinfo.get('id')) and score>=profile['minFormatScore'] and (original or not veto)
  if not allowed:reasons.append('Не соответствует качеству, русскому языку или выбранной озвучке')
  known_ignorable=('episode is not monitored','season is not monitored','series is not monitored','full season','season pack','one or more episodes','episode was not requested')
  blocked=[r for r in reasons if not r.lower().startswith(known_ignorable)]
@@ -444,7 +445,7 @@ def normalize(m,row,profile,source,expected=None):
  rank=0
  for index,quality in enumerate(profile['items']):
   if quality.get('quality',{}).get('id')==qinfo.get('id') or any(x.get('quality',{}).get('id')==qinfo.get('id') for x in quality.get('items',[])):rank=index
- res={'matchesSeries':matches_series,'qualityRank':rank,'title':title,'indexer':row.get('indexer') or row.get('indexerName') or 'Трекер','seeders':seed,'leechers':row.get('leechers'),'downloads':row.get('downloadCount'),'published':row.get('publishDate'),'size':row.get('size',0),'quality':qinfo.get('name') or 'Не определено','resolution':qinfo.get('resolution') or 0,'voices':voices or (['Язык не подтверждён'] if veto else ['Другая русская озвучка']),'seasons':season_hints(title) or ([row['seasonNumber']] if row.get('seasonNumber') else []),'score':score,'allowed':allowed,'rejections':reasons}
+ res={'matchesSeries':matches_series,'qualityRank':rank,'title':title,'indexer':row.get('indexer') or row.get('indexerName') or 'Трекер','seeders':seed,'leechers':row.get('leechers'),'downloads':row.get('downloadCount'),'published':row.get('publishDate'),'size':row.get('size',0),'quality':qinfo.get('name') or 'Не определено','resolution':qinfo.get('resolution') or 0,'voices':voices or (['Язык не ограничен'] if original else (['Язык не подтверждён'] if veto else ['Другая русская озвучка'])),'seasons':season_hints(title) or ([row['seasonNumber']] if row.get('seasonNumber') else []),'score':score,'allowed':allowed,'rejections':reasons}
  return res,row
 
 def supports_tv(indexer):

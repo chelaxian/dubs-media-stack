@@ -28,6 +28,7 @@ def due(state,now=None):
 
 def voice_rank(m,sid,title,formats=()):
  prefs=m.load('preferences.json',{}).get(str(sid),{})
+ if prefs.get('studio')=='Оригинал':return 0
  order=studio_order.indices(m.STUDIOS)
  selected=rt.resolve_studio(m.STUDIOS,prefs.get('studio'))
  if selected is not None:order.remove(selected);order.insert(0,selected)
