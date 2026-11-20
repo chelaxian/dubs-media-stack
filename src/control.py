@@ -123,18 +123,33 @@ def chosen_profile(baseid,studio,mode):
  old=next((x for x in api('qualityprofile') if x['name']==p['name']),None)
  if old:p['id']=old['id'];return api('qualityprofile/'+str(old['id']),'PUT',p)['id']
  return api('qualityprofile','POST',p)['id']
+def original_profile(baseid):
+ # A separate profile leaves all other series and their RU requirements intact.
+ base=api('qualityprofile/'+str(baseid));p=copy.deepcopy(base);p.pop('id',None)
+ p['name']=f'Сериал / база {baseid} / Оригинал'
+ for item in p.get('formatItems',[]):
+  if item.get('name')==rt.settings()['veto_format'] or item.get('name','').startswith(('Озвучка ', 'Выбор сериала — ', 'Русская дорожка')):
+   item['score']=0
+ p['minFormatScore']=0
+ old=next((x for x in api('qualityprofile') if x['name']==p['name']),None)
+ if old:p['id']=old['id'];return api('qualityprofile/'+str(old['id']),'PUT',p)['id']
+ return api('qualityprofile','POST',p)['id']
+
 def set_preference(sid,studio,mode):
  with LOCK:
   entries=watching();entry=next((x for x in entries if x['series']['id']==sid),None)
   if not entry:raise ValueError('Сериал отсутствует в списке «смотрю»')
   prefs=load('preferences.json',{});old=prefs.get(str(sid));s=api('series/'+str(sid));base=old['baseProfile'] if old else s['qualityProfileId']
   if studio==-1:target=base
+  elif studio==-2:
+   if mode not in ('fallback','strict'):raise ValueError('Неверный выбор')
+   target=original_profile(base)
   else:
    if studio<0 or studio>=len(STUDIOS) or mode not in ('fallback','strict'):raise ValueError('Неверный выбор')
    target=chosen_profile(base,studio,mode)
   s['qualityProfileId']=target;api('series/'+str(sid),'PUT',s)
   if studio==-1:prefs.pop(str(sid),None)
-  else:prefs[str(sid)]={'baseProfile':base,'studio':STUDIOS[studio]['name'],'mode':mode,'profileId':target}
+  else:prefs[str(sid)]={'baseProfile':base,'studio':'Оригинал' if studio==-2 else STUDIOS[studio]['name'],'mode':'strict' if studio==-2 else mode,'profileId':target}
   save('preferences.json',prefs)
 
 def match_watched(detail,watched,episodes):
@@ -690,7 +705,7 @@ class Handler(sec.HardenedHandler):
     except ValueError:self.json_output({'message':'Некорректное задание'},400)
     return
    if self.path=='/preference':
-    if not re.fullmatch(r'[1-9][0-9]{0,7}',data['series']) or not re.fullmatch(r'-1|[0-9]{1,2}',data['studio']) or data['mode'] not in ('fallback','strict'):raise ValueError('Invalid choice')
+    if not re.fullmatch(r'[1-9][0-9]{0,7}',data['series']) or not re.fullmatch(r'-[12]|[0-9]{1,2}',data['studio']) or data['mode'] not in ('fallback','strict'):raise ValueError('Invalid choice')
     set_preference(int(data['series']),int(data['studio']),data['mode'])
    elif self.path in ('/myshows-login','/myshows'):
     if not sec.consume([('account-connect',s['user'],4,900)]):self.send_error(429);return
